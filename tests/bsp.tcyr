@@ -1,0 +1,330 @@
+# bsp.tcyr -- BSP library test suite
+# Run: cyrb test tests/bsp.tcyr
+#   or: cat tests/bsp.tcyr | cc2 > build/test && chmod +x build/test && ./build/test
+
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+include "src/lib.cyr"
+
+fn main() {
+    alloc_init();
+
+    # ============================================================
+    test_group("fixed-point basics");
+    # ============================================================
+
+    assert_eq(fx_from_int(1), 65536, "from_int(1)");
+    assert_eq(fx_from_int(0), 0, "from_int(0)");
+    assert_eq(fx_from_int(100), 6553600, "from_int(100)");
+
+    assert_eq(fx_to_int(65536), 1, "to_int(1.0)");
+    assert_eq(fx_to_int(131072), 2, "to_int(2.0)");
+    assert_eq(fx_to_int(32768), 0, "to_int(0.5) truncates");
+    assert_eq(fx_to_int(0), 0, "to_int(0)");
+
+    # ============================================================
+    test_group("fixed-point arithmetic");
+    # ============================================================
+
+    var a = fx_from_int(10);
+    var b = fx_from_int(3);
+
+    assert_eq(fx_to_int(fx_mul(a, b)), 30, "10 * 3 = 30");
+    assert_eq(fx_to_int(fx_div(a, b)), 3, "10 / 3 = 3 (truncated)");
+    assert_eq(fx_to_int(fx_mul(fx_from_int(7), fx_from_int(6))), 42, "7 * 6 = 42");
+
+    # Division by zero
+    assert_eq(fx_div(a, 0), FX_MAX, "div by zero = MAX");
+
+    # Abs
+    var neg5a = fx_from_int(0 - 5);
+    assert_eq(fx_to_int(fx_abs(neg5a)), 5, "abs(-5) = 5");
+    assert_eq(fx_to_int(fx_abs(a)), 10, "abs(10) = 10");
+    assert_eq(fx_abs(0), 0, "abs(0) = 0");
+
+    # Min/max
+    assert_eq(fx_min(a, b), b, "min(10, 3) = 3");
+    assert_eq(fx_max(a, b), a, "max(10, 3) = 10");
+
+    # Clamp
+    assert_eq(fx_clamp(a, 0, fx_from_int(5)), fx_from_int(5), "clamp(10, 0, 5) = 5");
+    assert_eq(fx_clamp(b, 0, a), b, "clamp(3, 0, 10) = 3");
+
+    # ============================================================
+    test_group("AABB construction");
+    # ============================================================
+
+    var box[32];
+    aabb_init(&box);
+    aabb_add_point(&box, fx_from_int(10), fx_from_int(20));
+    aabb_add_point(&box, fx_from_int(30), fx_from_int(40));
+
+    assert_eq(fx_to_int(aabb_width(&box)), 20, "width 30-10=20");
+    assert_eq(fx_to_int(aabb_height(&box)), 20, "height 40-20=20");
+    assert_eq(fx_to_int(aabb_center_x(&box)), 20, "center_x (10+30)/2=20");
+    assert_eq(fx_to_int(aabb_center_y(&box)), 30, "center_y (20+40)/2=30");
+
+    # Expand with another point
+    aabb_add_point(&box, fx_from_int(0), fx_from_int(0));
+    assert_eq(fx_to_int(aabb_width(&box)), 30, "expanded width 30-0=30");
+    assert_eq(fx_to_int(aabb_height(&box)), 40, "expanded height 40-0=40");
+
+    # ============================================================
+    test_group("AABB containment");
+    # ============================================================
+
+    var box2[32];
+    aabb_set(&box2, fx_from_int(100), fx_from_int(0), fx_from_int(0), fx_from_int(100));
+
+    assert_eq(aabb_contains_point(&box2, fx_from_int(50), fx_from_int(50)), 1, "center inside");
+    assert_eq(aabb_contains_point(&box2, fx_from_int(0), fx_from_int(0)), 1, "corner inside");
+    assert_eq(aabb_contains_point(&box2, fx_from_int(100), fx_from_int(100)), 1, "far corner inside");
+    assert_eq(aabb_contains_point(&box2, fx_from_int(101), fx_from_int(50)), 0, "right outside");
+    assert_eq(aabb_contains_point(&box2, fx_from_int(50), fx_from_int(101)), 0, "top outside");
+    assert_eq(aabb_contains_point(&box2, fx_from_int(0 - 1), fx_from_int(50)), 0, "left outside");
+
+    # ============================================================
+    test_group("AABB intersection");
+    # ============================================================
+
+    var a_box[32];
+    var b_box[32];
+    aabb_set(&a_box, fx_from_int(20), fx_from_int(0), fx_from_int(0), fx_from_int(20));
+    aabb_set(&b_box, fx_from_int(30), fx_from_int(10), fx_from_int(10), fx_from_int(30));
+    assert_eq(aabb_intersects(&a_box, &b_box), 1, "overlapping boxes");
+
+    aabb_set(&b_box, fx_from_int(50), fx_from_int(40), fx_from_int(40), fx_from_int(50));
+    assert_eq(aabb_intersects(&a_box, &b_box), 0, "separated boxes");
+
+    # Touching edge
+    aabb_set(&b_box, fx_from_int(30), fx_from_int(20), fx_from_int(0), fx_from_int(20));
+    assert_eq(aabb_intersects(&a_box, &b_box), 1, "touching edge");
+
+    # ============================================================
+    test_group("AABB merge");
+    # ============================================================
+
+    var m1[32];
+    var m2[32];
+    aabb_set(&m1, fx_from_int(10), fx_from_int(0), fx_from_int(0), fx_from_int(10));
+    aabb_set(&m2, fx_from_int(20), fx_from_int(5), fx_from_int(5), fx_from_int(20));
+    aabb_merge(&m1, &m2);
+    assert_eq(fx_to_int(aabb_width(&m1)), 20, "merged width 0-20=20");
+    assert_eq(fx_to_int(aabb_height(&m1)), 20, "merged height 0-20=20");
+
+    # ============================================================
+    test_group("point-on-side");
+    # ============================================================
+
+    # Horizontal line going right from origin
+    var zero = fx_from_int(0);
+    var one = fx_from_int(1);
+    var five = fx_from_int(5);
+    var neg5 = fx_from_int(0 - 5);
+
+    var s1 = bsp_point_side(zero, five, zero, zero, one, zero);
+    var s2 = bsp_point_side(zero, neg5, zero, zero, one, zero);
+    assert_neq(s1, s2, "above vs below horizontal line");
+
+    # Vertical line going up from origin
+    var s3 = bsp_point_side(five, zero, zero, zero, zero, one);
+    var s4 = bsp_point_side(neg5, zero, zero, zero, zero, one);
+    assert_neq(s3, s4, "right vs left of vertical line");
+
+    # Point on the line
+    var s5 = bsp_point_side(five, zero, zero, zero, one, zero);
+    assert_eq(s5, 0, "point on line = right/front");
+
+    # ============================================================
+    test_group("segment intersection");
+    # ============================================================
+
+    # Crossing X: (0,0)-(10,10) vs (0,10)-(10,0)
+    var o = fx_from_int(0);
+    var ten = fx_from_int(10);
+    assert_eq(bsp_seg_intersect(o, o, ten, ten, o, ten, ten, o), 1, "crossing segments");
+
+    # Parallel horizontal: (0,0)-(10,0) vs (0,5)-(10,5)
+    assert_eq(bsp_seg_intersect(o, o, ten, o, o, five, ten, five), 0, "parallel horizontal");
+
+    # T-intersection: (5,0)-(5,10) vs (0,5)-(10,5)
+    assert_eq(bsp_seg_intersect(five, o, five, ten, o, five, ten, five), 1, "T intersection");
+
+    # Non-touching: (0,0)-(5,0) vs (6,0)-(10,0)
+    var six = fx_from_int(6);
+    assert_eq(bsp_seg_intersect(o, o, five, o, six, o, ten, o), 0, "collinear non-touching");
+
+    # Near miss: (0,0)-(4,4) vs (5,0)-(5,3)
+    var four = fx_from_int(4);
+    var three = fx_from_int(3);
+    assert_eq(bsp_seg_intersect(o, o, four, four, five, o, five, three), 0, "near miss");
+
+    # ============================================================
+    test_group("ray cast");
+    # ============================================================
+
+    # Ray from (0,5) going right, hitting segment (5,0)-(5,10)
+    var ray_t = bsp_ray_cast(o, five, one, o, five, o, five, ten);
+    assert(ray_t > 0, "ray hits wall");
+
+    # Ray from (0,5) going left (negative X), should miss wall at x=5
+    var neg1 = fx_from_int(0 - 1);
+    var ray_miss = bsp_ray_cast(o, five, neg1, o, five, o, five, ten);
+    assert(ray_miss <= 0, "ray going away misses or at origin");
+
+    # ============================================================
+    test_group("point-to-segment distance");
+    # ============================================================
+
+    # Point (5,5) to segment (0,0)-(10,0) = distance 5
+    var dist = bsp_point_seg_dist(five, five, o, o, ten, o);
+    var dist_int = fx_to_int(dist);
+    assert(dist_int >= 4, "dist >= 4");
+    assert(dist_int <= 6, "dist <= 6");
+
+    # Point on segment
+    var dist2 = bsp_point_seg_dist(five, o, o, o, ten, o);
+    assert_eq(fx_to_int(dist2), 0, "point on segment = 0");
+
+    # Point at endpoint
+    var dist3 = bsp_point_seg_dist(o, o, o, o, ten, o);
+    assert_eq(fx_to_int(dist3), 0, "point at endpoint = 0");
+
+    # ============================================================
+    test_group("BSP tree accessors");
+    # ============================================================
+
+    assert_eq(bsp_is_subsector(0x8000), 1, "subsector flag set");
+    assert_eq(bsp_is_subsector(0x8001), 1, "subsector flag + index");
+    assert_eq(bsp_is_subsector(0x0001), 0, "no subsector flag");
+    assert_eq(bsp_is_subsector(0), 0, "zero = not subsector");
+    assert_eq(bsp_subsector_idx(0x8005), 5, "extract subsector index 5");
+    assert_eq(bsp_subsector_idx(0x8000), 0, "extract subsector index 0");
+
+    # Node set/get
+    var nodes = alloc(BSP_NODE_SIZE * 2);
+    bsp_node_set(nodes, 0, fx_from_int(100), fx_from_int(200), fx_from_int(1), fx_from_int(0));
+    assert_eq(fx_to_int(bsp_node_x(nodes, 0)), 100, "node x");
+    assert_eq(fx_to_int(bsp_node_y(nodes, 0)), 200, "node y");
+    assert_eq(fx_to_int(bsp_node_dx(nodes, 0)), 1, "node dx");
+    assert_eq(fx_to_int(bsp_node_dy(nodes, 0)), 0, "node dy");
+
+    bsp_node_set_children(nodes, 0, 1, 0x8000);
+    assert_eq(bsp_node_child_r(nodes, 0), 1, "right child = node 1");
+    assert_eq(bsp_node_child_l(nodes, 0), 0x8000, "left child = subsector 0");
+
+    # ============================================================
+    test_group("BSP traversal");
+    # ============================================================
+
+    # Build a simple 2-node tree:
+    #   Node 0: vertical split at x=500, children: node 1 (right), ss 0 (left)
+    #   Node 1: vertical split at x=800, children: ss 1 (right), ss 2 (left)
+    var tree = alloc(BSP_NODE_SIZE * 2);
+    bsp_node_set(tree, 0, fx_from_int(500), fx_from_int(0), fx_from_int(0), fx_from_int(1));
+    bsp_node_set_children(tree, 0, 1, 0x8000);
+
+    bsp_node_set(tree, 1, fx_from_int(800), fx_from_int(0), fx_from_int(0), fx_from_int(1));
+    bsp_node_set_children(tree, 1, 0x8001, 0x8002);
+
+    # Root = node_count-1 = node 1 (split at x=800)
+    # Node 1 left child = 0x8002 (subsector 2), right child = 0x8001 (subsector 1)
+    # Node 0 is child of... wait, node 1's children are both subsectors.
+    # Node 0's right child = 1 (node 1), left child = 0x8000 (ss 0)
+    # But root is node 1, so node 0 is never the root!
+    # Fix: root should be node 0. Use node_count=2, root=node 1.
+    # Actually: tree traversal starts at node_count-1 = 1.
+    # So the tree as constructed has node 1 as root.
+    # Reinterpret: root splits at x=800
+    #   x<800 -> left -> ss 2
+    #   x>800 -> right -> ss 1
+    # Node 0 is orphaned! Need to fix tree structure.
+
+    # Rebuild: root=node 1 splits at x=500. children: node 0 (right), ss 0 (left)
+    #          node 0 splits at x=800. children: ss 1 (right), ss 2 (left)
+    bsp_node_set(tree, 1, fx_from_int(500), fx_from_int(0), fx_from_int(0), fx_from_int(1));
+    bsp_node_set_children(tree, 1, 0, 0x8000);
+    bsp_node_set(tree, 0, fx_from_int(800), fx_from_int(0), fx_from_int(0), fx_from_int(1));
+    bsp_node_set_children(tree, 0, 0x8001, 0x8002);
+
+    # x=100: root(node 1, split 500) -> left -> ss 0
+    var ss0 = bsp_find_subsector(tree, 2, fx_from_int(100), fx_from_int(50));
+    assert_eq(ss0, 0, "x=100 -> subsector 0");
+
+    # x=600: root -> right -> node 0(split 800) -> left -> ss 2
+    var ss2 = bsp_find_subsector(tree, 2, fx_from_int(600), fx_from_int(50));
+    assert_eq(ss2, 2, "x=600 -> subsector 2");
+
+    # x=900: root -> right -> node 0 -> right -> ss 1
+    var ss1 = bsp_find_subsector(tree, 2, fx_from_int(900), fx_from_int(50));
+    assert_eq(ss1, 1, "x=900 -> subsector 1");
+
+    # ============================================================
+    test_group("blockmap");
+    # ============================================================
+
+    # 8x8 grid, cell size 128 units, origin at (0,0)
+    var bm_size = 40 + 64 * 136;
+    var bm = alloc(bm_size);
+    blockmap_init(bm, o, o, fx_from_int(128), 8, 8);
+
+    # Insert segment at (100,100)-(200,100)
+    var p100 = fx_from_int(100);
+    var p200 = fx_from_int(200);
+    blockmap_insert_seg(bm, 7, p100, p100, p200, p100);
+
+    # Cell (0,0) = 0..128 range, should contain the segment
+    var cell = blockmap_get_cell(bm, 0, 0);
+    assert_eq(blockmap_cell_count(cell), 1, "cell(0,0) has 1 seg");
+    assert_eq(blockmap_cell_seg(cell, 0), 7, "cell(0,0) seg idx=7");
+
+    # Cell (1,0) = 128..256 range, should also contain it
+    var cell2 = blockmap_get_cell(bm, 1, 0);
+    assert_eq(blockmap_cell_count(cell2), 1, "cell(1,0) has 1 seg");
+
+    # Cell (3,3) = far away, should be empty
+    var cell3 = blockmap_get_cell(bm, 3, 3);
+    assert_eq(blockmap_cell_count(cell3), 0, "cell(3,3) empty");
+
+    # Query by point
+    var results = alloc(128);
+    var n = blockmap_query_point(bm, p100, p100, fx_from_int(10), results, 16);
+    assert_eq(n, 1, "query near (100,100) finds 1");
+    assert_eq(load64(results), 7, "query result is seg 7");
+
+    var n2 = blockmap_query_point(bm, fx_from_int(500), fx_from_int(500), fx_from_int(10), results, 16);
+    assert_eq(n2, 0, "query far away finds 0");
+
+    # ============================================================
+    test_group("line-of-sight");
+    # ============================================================
+
+    # Build wall array: one wall at x=5, from y=0 to y=10
+    var walls = alloc(32);
+    store64(walls, five);
+    store64(walls + 8, o);
+    store64(walls + 16, five);
+    store64(walls + 24, ten);
+
+    var flags = alloc(8);
+    store64(flags, 0);
+
+    # (0,5) to (10,5): blocked by wall at x=5
+    assert_eq(bsp_check_sight(o, five, ten, five, walls, 1, flags), 0, "sight blocked by wall");
+
+    # (0,5) to (3,5): no wall in the way
+    assert_eq(bsp_check_sight(o, five, three, five, walls, 1, flags), 1, "sight clear before wall");
+
+    # Mark wall as two-sided (doesn't block sight)
+    store64(flags, 1);
+    assert_eq(bsp_check_sight(o, five, ten, five, walls, 1, flags), 1, "two-sided wall doesn't block");
+
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

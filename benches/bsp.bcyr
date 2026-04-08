@@ -1,0 +1,250 @@
+# bsp.bcyr -- BSP library benchmarks
+# Run: cyrb bench benches/bsp.bcyr
+#   or: cat benches/bsp.bcyr | cc2 > build/bench && chmod +x build/bench && ./build/bench
+
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/fnptr.cyr"
+include "lib/bench.cyr"
+
+include "src/lib.cyr"
+
+# ================================================================
+# Benchmark globals (setup once, used by bench functions)
+# ================================================================
+
+var _b_box_a = 0;
+var _b_box_b = 0;
+var _b_tree = 0;
+var _b_bm = 0;
+var _b_walls = 0;
+var _b_flags = 0;
+
+fn bench_setup() {
+    # AABB boxes
+    _b_box_a = alloc(32);
+    _b_box_b = alloc(32);
+    aabb_set(_b_box_a, fx_from_int(100), fx_from_int(0), fx_from_int(0), fx_from_int(100));
+    aabb_set(_b_box_b, fx_from_int(80), fx_from_int(20), fx_from_int(20), fx_from_int(80));
+
+    # BSP tree: 3 nodes, vertical splits
+    _b_tree = alloc(BSP_NODE_SIZE * 3);
+    bsp_node_set(_b_tree, 0, fx_from_int(500), fx_from_int(0), fx_from_int(0), fx_from_int(1));
+    bsp_node_set_children(_b_tree, 0, 1, 0x8000);
+    bsp_node_set(_b_tree, 1, fx_from_int(750), fx_from_int(0), fx_from_int(0), fx_from_int(1));
+    bsp_node_set_children(_b_tree, 1, 2, 0x8001);
+    bsp_node_set(_b_tree, 2, fx_from_int(900), fx_from_int(0), fx_from_int(0), fx_from_int(1));
+    bsp_node_set_children(_b_tree, 2, 0x8002, 0x8003);
+
+    # Blockmap: 16x16, cell size 64
+    var bm_size = 40 + 256 * 136;
+    _b_bm = alloc(bm_size);
+    blockmap_init(_b_bm, fx_from_int(0), fx_from_int(0), fx_from_int(64), 16, 16);
+    # Insert 32 segments
+    for (var i = 0; i < 32; i = i + 1) {
+        var x1 = fx_from_int(i * 30);
+        var y1 = fx_from_int(i * 25);
+        var x2 = fx_from_int(i * 30 + 50);
+        var y2 = fx_from_int(i * 25 + 40);
+        blockmap_insert_seg(_b_bm, i, x1, y1, x2, y2);
+    }
+
+    # Walls for line-of-sight: 8 walls
+    _b_walls = alloc(32 * 8);
+    _b_flags = alloc(8 * 8);
+    for (var i = 0; i < 8; i = i + 1) {
+        var base = _b_walls + i * 32;
+        store64(base, fx_from_int(i * 100 + 50));
+        store64(base + 8, fx_from_int(0));
+        store64(base + 16, fx_from_int(i * 100 + 50));
+        store64(base + 24, fx_from_int(1000));
+        store64(_b_flags + i * 8, 0);
+    }
+    return 0;
+}
+
+# ================================================================
+# Fixed-point benchmarks
+# ================================================================
+
+fn bench_fx_mul() {
+    var a = fx_from_int(42);
+    var b = fx_from_int(17);
+    var c = fx_mul(a, b);
+    return 0;
+}
+
+fn bench_fx_div() {
+    var a = fx_from_int(1000);
+    var b = fx_from_int(7);
+    var c = fx_div(a, b);
+    return 0;
+}
+
+# ================================================================
+# AABB benchmarks
+# ================================================================
+
+fn bench_aabb_contains() {
+    aabb_contains_point(_b_box_a, fx_from_int(50), fx_from_int(50));
+    return 0;
+}
+
+fn bench_aabb_intersects() {
+    aabb_intersects(_b_box_a, _b_box_b);
+    return 0;
+}
+
+fn bench_aabb_merge() {
+    var tmp[32];
+    aabb_set(&tmp, fx_from_int(100), fx_from_int(0), fx_from_int(0), fx_from_int(100));
+    aabb_merge(&tmp, _b_box_b);
+    return 0;
+}
+
+# ================================================================
+# Intersection benchmarks
+# ================================================================
+
+fn bench_seg_intersect_hit() {
+    bsp_seg_intersect(
+        fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(10),
+        fx_from_int(0), fx_from_int(10), fx_from_int(10), fx_from_int(0));
+    return 0;
+}
+
+fn bench_seg_intersect_miss() {
+    bsp_seg_intersect(
+        fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(0),
+        fx_from_int(0), fx_from_int(5), fx_from_int(10), fx_from_int(5));
+    return 0;
+}
+
+fn bench_point_seg_dist() {
+    bsp_point_seg_dist(
+        fx_from_int(5), fx_from_int(5),
+        fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(0));
+    return 0;
+}
+
+fn bench_ray_cast() {
+    bsp_ray_cast(
+        fx_from_int(0), fx_from_int(5), fx_from_int(1), fx_from_int(0),
+        fx_from_int(5), fx_from_int(0), fx_from_int(5), fx_from_int(10));
+    return 0;
+}
+
+# ================================================================
+# BSP traversal benchmarks
+# ================================================================
+
+fn bench_point_on_side() {
+    bsp_point_on_side(_b_tree, 0, fx_from_int(300), fx_from_int(100));
+    return 0;
+}
+
+fn bench_find_subsector() {
+    bsp_find_subsector(_b_tree, 3, fx_from_int(600), fx_from_int(100));
+    return 0;
+}
+
+# ================================================================
+# Blockmap benchmarks
+# ================================================================
+
+fn bench_blockmap_query() {
+    var results = alloc(128);
+    blockmap_query_point(_b_bm, fx_from_int(150), fx_from_int(100), fx_from_int(50), results, 16);
+    return 0;
+}
+
+# ================================================================
+# Line-of-sight benchmark
+# ================================================================
+
+fn bench_check_sight() {
+    bsp_check_sight(
+        fx_from_int(0), fx_from_int(500),
+        fx_from_int(1000), fx_from_int(500),
+        _b_walls, 8, _b_flags);
+    return 0;
+}
+
+# ================================================================
+# Main
+# ================================================================
+
+fn main() {
+    alloc_init();
+    bench_setup();
+
+    var benches = vec_new();
+
+    # Fixed-point
+    var b1 = bench_new("fx_mul");
+    bench_run(b1, &bench_fx_mul, 100000);
+    vec_push(benches, b1);
+
+    var b2 = bench_new("fx_div");
+    bench_run(b2, &bench_fx_div, 100000);
+    vec_push(benches, b2);
+
+    # AABB
+    var b3 = bench_new("aabb_contains");
+    bench_run(b3, &bench_aabb_contains, 100000);
+    vec_push(benches, b3);
+
+    var b4 = bench_new("aabb_intersects");
+    bench_run(b4, &bench_aabb_intersects, 100000);
+    vec_push(benches, b4);
+
+    var b5 = bench_new("aabb_merge");
+    bench_run(b5, &bench_aabb_merge, 50000);
+    vec_push(benches, b5);
+
+    # Intersections
+    var b6 = bench_new("seg_intersect_hit");
+    bench_run(b6, &bench_seg_intersect_hit, 100000);
+    vec_push(benches, b6);
+
+    var b7 = bench_new("seg_intersect_miss");
+    bench_run(b7, &bench_seg_intersect_miss, 100000);
+    vec_push(benches, b7);
+
+    var b8 = bench_new("point_seg_dist");
+    bench_run(b8, &bench_point_seg_dist, 100000);
+    vec_push(benches, b8);
+
+    var b9 = bench_new("ray_cast");
+    bench_run(b9, &bench_ray_cast, 100000);
+    vec_push(benches, b9);
+
+    # BSP traversal
+    var b10 = bench_new("point_on_side");
+    bench_run(b10, &bench_point_on_side, 100000);
+    vec_push(benches, b10);
+
+    var b11 = bench_new("find_subsector_3node");
+    bench_run(b11, &bench_find_subsector, 100000);
+    vec_push(benches, b11);
+
+    # Blockmap
+    var b12 = bench_new("blockmap_query");
+    bench_run(b12, &bench_blockmap_query, 10000);
+    vec_push(benches, b12);
+
+    # Line-of-sight
+    var b13 = bench_new("check_sight_8walls");
+    bench_run(b13, &bench_check_sight, 50000);
+    vec_push(benches, b13);
+
+    syscall(1, 1, "\n=== BSP Benchmarks ===\n", 23);
+    bench_report_all(benches);
+
+    return 0;
+}
+
+var r = main();
+syscall(60, r);
