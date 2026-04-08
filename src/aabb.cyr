@@ -1,0 +1,95 @@
+# aabb.cyr -- axis-aligned bounding boxes
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# An AABB is stored as 4 values: top, bottom, left, right (all fixed-point).
+# Passed via pointer to a 32-byte block:
+#   [0]  top    (max Y)
+#   [8]  bottom (min Y)
+#   [16] left   (min X)
+#   [24] right  (max X)
+
+enum BBox {
+    AABB_TOP = 0;
+    AABB_BOTTOM = 8;
+    AABB_LEFT = 16;
+    AABB_RIGHT = 24;
+    AABB_SIZE = 32;
+}
+
+# Initialize an AABB to "empty" (inverted extremes)
+fn aabb_init(box) {
+    store64(box + AABB_TOP, 0 - 2147483648);
+    store64(box + AABB_BOTTOM, 2147483647);
+    store64(box + AABB_LEFT, 2147483647);
+    store64(box + AABB_RIGHT, 0 - 2147483648);
+    return 0;
+}
+
+# Set AABB from explicit values
+fn aabb_set(box, top, bottom, left, right) {
+    store64(box + AABB_TOP, top);
+    store64(box + AABB_BOTTOM, bottom);
+    store64(box + AABB_LEFT, left);
+    store64(box + AABB_RIGHT, right);
+    return 0;
+}
+
+# Expand AABB to include point (px, py)
+fn aabb_add_point(box, px, py) {
+    if (py > load64(box + AABB_TOP)) { store64(box + AABB_TOP, py); }
+    if (py < load64(box + AABB_BOTTOM)) { store64(box + AABB_BOTTOM, py); }
+    if (px < load64(box + AABB_LEFT)) { store64(box + AABB_LEFT, px); }
+    if (px > load64(box + AABB_RIGHT)) { store64(box + AABB_RIGHT, px); }
+    return 0;
+}
+
+# Test if point (px, py) is inside AABB
+fn aabb_contains_point(box, px, py) {
+    if (px < load64(box + AABB_LEFT)) { return 0; }
+    if (px > load64(box + AABB_RIGHT)) { return 0; }
+    if (py < load64(box + AABB_BOTTOM)) { return 0; }
+    if (py > load64(box + AABB_TOP)) { return 0; }
+    return 1;
+}
+
+# Test if two AABBs overlap
+fn aabb_intersects(a, b) {
+    if (load64(a + AABB_LEFT) > load64(b + AABB_RIGHT)) { return 0; }
+    if (load64(a + AABB_RIGHT) < load64(b + AABB_LEFT)) { return 0; }
+    if (load64(a + AABB_BOTTOM) > load64(b + AABB_TOP)) { return 0; }
+    if (load64(a + AABB_TOP) < load64(b + AABB_BOTTOM)) { return 0; }
+    return 1;
+}
+
+# Merge AABB b into AABB a (a = union of a and b)
+fn aabb_merge(a, b) {
+    var bt = load64(b + AABB_TOP);
+    var bb = load64(b + AABB_BOTTOM);
+    var bl = load64(b + AABB_LEFT);
+    var br = load64(b + AABB_RIGHT);
+    if (bt > load64(a + AABB_TOP)) { store64(a + AABB_TOP, bt); }
+    if (bb < load64(a + AABB_BOTTOM)) { store64(a + AABB_BOTTOM, bb); }
+    if (bl < load64(a + AABB_LEFT)) { store64(a + AABB_LEFT, bl); }
+    if (br > load64(a + AABB_RIGHT)) { store64(a + AABB_RIGHT, br); }
+    return 0;
+}
+
+# Compute width of AABB
+fn aabb_width(box) {
+    return load64(box + AABB_RIGHT) - load64(box + AABB_LEFT);
+}
+
+# Compute height of AABB
+fn aabb_height(box) {
+    return load64(box + AABB_TOP) - load64(box + AABB_BOTTOM);
+}
+
+# Compute center X
+fn aabb_center_x(box) {
+    return (load64(box + AABB_LEFT) + load64(box + AABB_RIGHT)) >> 1;
+}
+
+# Compute center Y
+fn aabb_center_y(box) {
+    return (load64(box + AABB_BOTTOM) + load64(box + AABB_TOP)) >> 1;
+}

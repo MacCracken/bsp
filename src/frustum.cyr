@@ -1,0 +1,102 @@
+# frustum.cyr -- view frustum culling (2D)
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# A 2D view frustum is defined by the viewer position, direction,
+# and field of view. It forms a wedge/cone shape.
+#
+# For BSP rendering, we test if a bounding box is within the
+# view frustum before traversing into that subtree.
+#
+# Frustum stored as 2 half-planes (left edge, right edge):
+#   [0]   left_nx   -- left edge normal X (fixed)
+#   [8]   left_ny   -- left edge normal Y (fixed)
+#   [16]  right_nx  -- right edge normal X (fixed)
+#   [24]  right_ny  -- right edge normal Y (fixed)
+#   [32]  view_x    -- viewer position X (fixed)
+#   [40]  view_y    -- viewer position Y (fixed)
+
+enum FrustumField {
+    FR_LEFT_NX = 0;
+    FR_LEFT_NY = 8;
+    FR_RIGHT_NX = 16;
+    FR_RIGHT_NY = 24;
+    FR_VIEW_X = 32;
+    FR_VIEW_Y = 40;
+    FR_SIZE = 48;
+}
+
+# Build a frustum from viewer position, facing angle, and half-FOV.
+# Requires sin/cos functions from the caller's trig table.
+# left_angle = view_angle + fov_half
+# right_angle = view_angle - fov_half
+fn frustum_build(fr, vx, vy, left_cos, left_sin, right_cos, right_sin) {
+    # Left plane normal points inward (perpendicular to left edge, clockwise)
+    store64(fr + FR_LEFT_NX, left_sin);
+    store64(fr + FR_LEFT_NY, 0 - left_cos);
+
+    # Right plane normal points inward
+    store64(fr + FR_RIGHT_NX, 0 - right_sin);
+    store64(fr + FR_RIGHT_NY, right_cos);
+
+    store64(fr + FR_VIEW_X, vx);
+    store64(fr + FR_VIEW_Y, vy);
+    return 0;
+}
+
+# Test if point (px, py) is inside the frustum.
+# Returns 1 if inside, 0 if outside.
+fn frustum_test_point(fr, px, py) {
+    var vx = load64(fr + FR_VIEW_X);
+    var vy = load64(fr + FR_VIEW_Y);
+    var dx = px - vx;
+    var dy = py - vy;
+
+    # Test against left plane
+    var left_dot = fx_mul(dx >> 4, load64(fr + FR_LEFT_NX) >> 4)
+                 + fx_mul(dy >> 4, load64(fr + FR_LEFT_NY) >> 4);
+    if (left_dot < 0) { return 0; }
+
+    # Test against right plane
+    var right_dot = fx_mul(dx >> 4, load64(fr + FR_RIGHT_NX) >> 4)
+                  + fx_mul(dy >> 4, load64(fr + FR_RIGHT_NY) >> 4);
+    if (right_dot < 0) { return 0; }
+
+    return 1;
+}
+
+# Test if AABB is potentially visible in the frustum.
+# Conservative: returns 1 if any part might be visible.
+# Uses corner testing -- if all 4 corners are outside the
+# same half-plane, the box is fully outside.
+fn frustum_test_aabb(fr, box) {
+    var vx = load64(fr + FR_VIEW_X);
+    var vy = load64(fr + FR_VIEW_Y);
+
+    var top = load64(box + AABB_TOP);
+    var bot = load64(box + AABB_BOTTOM);
+    var left = load64(box + AABB_LEFT);
+    var right = load64(box + AABB_RIGHT);
+
+    var lnx = load64(fr + FR_LEFT_NX);
+    var lny = load64(fr + FR_LEFT_NY);
+    var rnx = load64(fr + FR_RIGHT_NX);
+    var rny = load64(fr + FR_RIGHT_NY);
+
+    # Test left plane: if all 4 corners have negative dot product, reject
+    var l_fail = 0;
+    if (fx_mul((left - vx) >> 4, lnx >> 4) + fx_mul((top - vy) >> 4, lny >> 4) < 0) { l_fail = l_fail + 1; }
+    if (fx_mul((right - vx) >> 4, lnx >> 4) + fx_mul((top - vy) >> 4, lny >> 4) < 0) { l_fail = l_fail + 1; }
+    if (fx_mul((left - vx) >> 4, lnx >> 4) + fx_mul((bot - vy) >> 4, lny >> 4) < 0) { l_fail = l_fail + 1; }
+    if (fx_mul((right - vx) >> 4, lnx >> 4) + fx_mul((bot - vy) >> 4, lny >> 4) < 0) { l_fail = l_fail + 1; }
+    if (l_fail == 4) { return 0; }
+
+    # Test right plane
+    var r_fail = 0;
+    if (fx_mul((left - vx) >> 4, rnx >> 4) + fx_mul((top - vy) >> 4, rny >> 4) < 0) { r_fail = r_fail + 1; }
+    if (fx_mul((right - vx) >> 4, rnx >> 4) + fx_mul((top - vy) >> 4, rny >> 4) < 0) { r_fail = r_fail + 1; }
+    if (fx_mul((left - vx) >> 4, rnx >> 4) + fx_mul((bot - vy) >> 4, rny >> 4) < 0) { r_fail = r_fail + 1; }
+    if (fx_mul((right - vx) >> 4, rnx >> 4) + fx_mul((bot - vy) >> 4, rny >> 4) < 0) { r_fail = r_fail + 1; }
+    if (r_fail == 4) { return 0; }
+
+    return 1;
+}

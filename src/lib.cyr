@@ -1,0 +1,28 @@
+# lib.cyr -- BSP library public API
+# Usage: include "bsp/src/lib.cyr"
+#
+# Binary Space Partitioning primitives for Cyrius.
+# Zero dependencies. No globals. Pure functions. 16.16 fixed-point.
+#
+# Modules:
+#   fixed     - minimal fixed-point math (fx_mul, fx_div, fx_abs, etc.)
+#   aabb      - axis-aligned bounding boxes
+#   intersect - segment intersection, ray casting, line-of-sight
+#   tree      - BSP node layout, accessors, construction helpers
+#   traverse  - BSP tree traversal, point-to-subsector lookup
+#   query     - spatial queries (containment, nearest segment)
+#   blockmap  - grid-based spatial index for collision
+#   frustum   - 2D view frustum construction and culling
+#
+# All coordinates are 16.16 fixed-point (integer << 16).
+# No heap allocation -- callers provide all buffers.
+# No I/O, no rendering -- pure geometry.
+
+include "src/fixed.cyr"
+include "src/aabb.cyr"
+include "src/intersect.cyr"
+include "src/tree.cyr"
+include "src/traverse.cyr"
+include "src/query.cyr"
+include "src/blockmap.cyr"
+include "src/frustum.cyr"

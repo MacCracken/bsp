@@ -1,0 +1,161 @@
+# blockmap.cyr -- grid-based spatial index
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# A blockmap divides 2D space into a regular grid of cells.
+# Each cell stores a list of segment indices that overlap it.
+# Used for fast collision detection (only test nearby segments).
+#
+# Blockmap layout (caller-provided buffer):
+#   [0]   origin_x   -- grid origin X (fixed-point)
+#   [8]   origin_y   -- grid origin Y (fixed-point)
+#   [16]  cell_size  -- cell width/height (fixed-point)
+#   [24]  cols       -- number of columns
+#   [32]  rows       -- number of rows
+#   [40]  data       -- start of cell data
+#
+# Cell data: each cell is a fixed-size block of segment indices.
+# Cell at (col, row) starts at: data + (row * cols + col) * cell_stride
+# First i64 in cell = count of segments in this cell
+# Remaining = segment indices
+
+enum BlockmapConst {
+    BM_ORIGIN_X = 0;
+    BM_ORIGIN_Y = 8;
+    BM_CELL_SIZE = 16;
+    BM_COLS = 24;
+    BM_ROWS = 32;
+    BM_DATA = 40;
+    BM_CELL_MAX_SEGS = 16;
+    BM_CELL_STRIDE = 136;
+}
+
+# Initialize a blockmap with given bounds and cell size.
+# buf = caller-provided buffer (must be large enough)
+# Returns: buf (for convenience)
+fn blockmap_init(buf, origin_x, origin_y, cell_size, cols, rows) {
+    store64(buf + BM_ORIGIN_X, origin_x);
+    store64(buf + BM_ORIGIN_Y, origin_y);
+    store64(buf + BM_CELL_SIZE, cell_size);
+    store64(buf + BM_COLS, cols);
+    store64(buf + BM_ROWS, rows);
+
+    # Zero all cell counts
+    var total_cells = cols * rows;
+    for (var i = 0; i < total_cells; i = i + 1) {
+        store64(buf + BM_DATA + i * BM_CELL_STRIDE, 0);
+    }
+    return buf;
+}
+
+# Convert world position to cell coordinates
+fn blockmap_cell_x(bm, wx) {
+    var ox = load64(bm + BM_ORIGIN_X);
+    var cs = load64(bm + BM_CELL_SIZE);
+    if (cs == 0) { return 0; }
+    return fx_to_int(fx_div(wx - ox, cs));
+}
+
+fn blockmap_cell_y(bm, wy) {
+    var oy = load64(bm + BM_ORIGIN_Y);
+    var cs = load64(bm + BM_CELL_SIZE);
+    if (cs == 0) { return 0; }
+    return fx_to_int(fx_div(wy - oy, cs));
+}
+
+# Add a segment index to the cell at (col, row)
+fn blockmap_add(bm, col, row, seg_idx) {
+    var cols = load64(bm + BM_COLS);
+    var rows = load64(bm + BM_ROWS);
+    if (col < 0) { return 0; }
+    if (row < 0) { return 0; }
+    if (col >= cols) { return 0; }
+    if (row >= rows) { return 0; }
+
+    var cell = bm + BM_DATA + (row * cols + col) * BM_CELL_STRIDE;
+    var count = load64(cell);
+    if (count >= BM_CELL_MAX_SEGS) { return 0; }
+
+    store64(cell + 8 + count * 8, seg_idx);
+    store64(cell, count + 1);
+    return 1;
+}
+
+# Insert a segment into all cells it overlaps.
+# Segment endpoints: (x1,y1)-(x2,y2) in fixed-point.
+fn blockmap_insert_seg(bm, seg_idx, x1, y1, x2, y2) {
+    var c1 = blockmap_cell_x(bm, fx_min(x1, x2));
+    var c2 = blockmap_cell_x(bm, fx_max(x1, x2));
+    var r1 = blockmap_cell_y(bm, fx_min(y1, y2));
+    var r2 = blockmap_cell_y(bm, fx_max(y1, y2));
+
+    var cols = load64(bm + BM_COLS);
+    var rows = load64(bm + BM_ROWS);
+    if (c1 < 0) { c1 = 0; }
+    if (r1 < 0) { r1 = 0; }
+    if (c2 >= cols) { c2 = cols - 1; }
+    if (r2 >= rows) { r2 = rows - 1; }
+
+    for (var r = r1; r <= r2; r = r + 1) {
+        for (var c = c1; c <= c2; c = c + 1) {
+            blockmap_add(bm, c, r, seg_idx);
+        }
+    }
+    return 0;
+}
+
+# Query: get pointer to cell data at (col, row).
+# Returns pointer to cell (first i64 = count, then indices), or 0.
+fn blockmap_get_cell(bm, col, row) {
+    var cols = load64(bm + BM_COLS);
+    var rows = load64(bm + BM_ROWS);
+    if (col < 0) { return 0; }
+    if (row < 0) { return 0; }
+    if (col >= cols) { return 0; }
+    if (row >= rows) { return 0; }
+    return bm + BM_DATA + (row * cols + col) * BM_CELL_STRIDE;
+}
+
+# Query: get count of segments in cell
+fn blockmap_cell_count(cell) {
+    if (cell == 0) { return 0; }
+    return load64(cell);
+}
+
+# Query: get segment index from cell
+fn blockmap_cell_seg(cell, idx) {
+    return load64(cell + 8 + idx * 8);
+}
+
+# Query: get all segment indices near point (px, py) within radius.
+# Results written to out_buf (array of i64 seg indices).
+# Returns number of results written.
+fn blockmap_query_point(bm, px, py, radius, out_buf, out_max) {
+    var c1 = blockmap_cell_x(bm, px - radius);
+    var c2 = blockmap_cell_x(bm, px + radius);
+    var r1 = blockmap_cell_y(bm, py - radius);
+    var r2 = blockmap_cell_y(bm, py + radius);
+
+    var cols = load64(bm + BM_COLS);
+    var rows = load64(bm + BM_ROWS);
+    if (c1 < 0) { c1 = 0; }
+    if (r1 < 0) { r1 = 0; }
+    if (c2 >= cols) { c2 = cols - 1; }
+    if (r2 >= rows) { r2 = rows - 1; }
+
+    var out_count = 0;
+    for (var r = r1; r <= r2; r = r + 1) {
+        for (var c = c1; c <= c2; c = c + 1) {
+            var cell = blockmap_get_cell(bm, c, r);
+            if (cell != 0) {
+                var n = blockmap_cell_count(cell);
+                for (var i = 0; i < n; i = i + 1) {
+                    if (out_count < out_max) {
+                        store64(out_buf + out_count * 8, blockmap_cell_seg(cell, i));
+                        out_count = out_count + 1;
+                    }
+                }
+            }
+        }
+    }
+    return out_count;
+}

@@ -1,0 +1,72 @@
+# tree.cyr -- BSP tree construction
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# A BSP tree partitions 2D space using splitting lines.
+# Each node stores a partition line and two children.
+# Leaves (subsectors) contain the actual geometry.
+#
+# Tree is stored in caller-provided arrays:
+#
+# Nodes array: each node = 112 bytes
+#   [0]   x      -- partition line origin X (fixed)
+#   [8]   y      -- partition line origin Y (fixed)
+#   [16]  dx     -- partition line direction X (fixed)
+#   [24]  dy     -- partition line direction Y (fixed)
+#   [32]  bbox_r -- right child bounding box (32 bytes)
+#   [64]  bbox_l -- left child bounding box (32 bytes)
+#   [96]  child_r -- right child index (bit 15 = subsector flag)
+#   [104] child_l -- left child index (bit 15 = subsector flag)
+
+enum BspNode {
+    BSP_NODE_SIZE = 112;
+    BSP_NODE_X = 0;
+    BSP_NODE_Y = 8;
+    BSP_NODE_DX = 16;
+    BSP_NODE_DY = 24;
+    BSP_NODE_BBOX_R = 32;
+    BSP_NODE_BBOX_L = 64;
+    BSP_NODE_CHILD_R = 96;
+    BSP_NODE_CHILD_L = 104;
+    BSP_NF_SUBSECTOR = 0x8000;
+}
+
+# Check if a child index refers to a subsector (leaf)
+fn bsp_is_subsector(child) {
+    if ((child & BSP_NF_SUBSECTOR) != 0) { return 1; }
+    return 0;
+}
+
+# Extract subsector index from a child reference
+fn bsp_subsector_idx(child) {
+    return child & 0x7FFF;
+}
+
+# Get node partition line fields
+fn bsp_node_x(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_X); }
+fn bsp_node_y(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_Y); }
+fn bsp_node_dx(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_DX); }
+fn bsp_node_dy(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_DY); }
+fn bsp_node_child_r(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_CHILD_R); }
+fn bsp_node_child_l(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_CHILD_L); }
+
+# Get pointer to a node's child bounding box
+fn bsp_node_bbox_r(nodes, idx) { return nodes + idx * BSP_NODE_SIZE + BSP_NODE_BBOX_R; }
+fn bsp_node_bbox_l(nodes, idx) { return nodes + idx * BSP_NODE_SIZE + BSP_NODE_BBOX_L; }
+
+# Set a node's partition line
+fn bsp_node_set(nodes, idx, x, y, dx, dy) {
+    var base = nodes + idx * BSP_NODE_SIZE;
+    store64(base + BSP_NODE_X, x);
+    store64(base + BSP_NODE_Y, y);
+    store64(base + BSP_NODE_DX, dx);
+    store64(base + BSP_NODE_DY, dy);
+    return 0;
+}
+
+# Set a node's children
+fn bsp_node_set_children(nodes, idx, right, left) {
+    var base = nodes + idx * BSP_NODE_SIZE;
+    store64(base + BSP_NODE_CHILD_R, right);
+    store64(base + BSP_NODE_CHILD_L, left);
+    return 0;
+}

@@ -1,0 +1,10 @@
+[package]
+name = "bsp"
+version = "0.1.0"
+description = "BSP — Binary Space Partitioning. Spatial geometry primitives for Cyrius."
+license = "GPL-3.0-only"
+repository = "https://github.com/MacCracken/bsp"
+
+[build]
+src = "src/lib.cyr"
+output = "build/bsp"

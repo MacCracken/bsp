@@ -1,0 +1,110 @@
+# test_bsp.cyr -- BSP library test
+# Build: cat programs/test_bsp.cyr | cc2 > build/test_bsp && chmod +x build/test_bsp
+
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+
+include "src/lib.cyr"
+
+fn test_fixed() {
+    syscall(1, 1, "test fixed: ", 12);
+    var a = fx_from_int(10);
+    var b = fx_from_int(3);
+    var c = fx_mul(a, b);
+    fmt_int(fx_to_int(c));
+    syscall(1, 1, " (expect 30)\n", 13);
+    var d = fx_div(a, b);
+    fmt_int(fx_to_int(d));
+    syscall(1, 1, " (expect 3)\n", 12);
+    return 0;
+}
+
+fn test_aabb() {
+    syscall(1, 1, "test aabb: ", 11);
+    var box[32];
+    aabb_init(&box);
+    aabb_add_point(&box, fx_from_int(10), fx_from_int(20));
+    aabb_add_point(&box, fx_from_int(30), fx_from_int(40));
+
+    var w = fx_to_int(aabb_width(&box));
+    var h = fx_to_int(aabb_height(&box));
+    fmt_int(w);
+    syscall(1, 1, "x", 1);
+    fmt_int(h);
+    syscall(1, 1, " (expect 20x20)\n", 16);
+
+    var inside = aabb_contains_point(&box, fx_from_int(15), fx_from_int(25));
+    var outside = aabb_contains_point(&box, fx_from_int(50), fx_from_int(50));
+    syscall(1, 1, "  in=", 5); fmt_int(inside);
+    syscall(1, 1, " out=", 5); fmt_int(outside);
+    syscall(1, 1, " (expect 1, 0)\n", 15);
+    return 0;
+}
+
+fn test_intersect() {
+    syscall(1, 1, "test intersect: ", 16);
+    # Crossing segments: (0,0)-(10,10) and (0,10)-(10,0)
+    var a = fx_from_int(0);
+    var b = fx_from_int(10);
+    var hit = bsp_seg_intersect(a, a, b, b, a, b, b, a);
+    fmt_int(hit);
+    syscall(1, 1, " (expect 1)\n", 12);
+
+    # Parallel segments: (0,0)-(10,0) and (0,5)-(10,5)
+    var five = fx_from_int(5);
+    var miss = bsp_seg_intersect(a, a, b, a, a, five, b, five);
+    syscall(1, 1, "  parallel=", 11); fmt_int(miss);
+    syscall(1, 1, " (expect 0)\n", 12);
+    return 0;
+}
+
+fn test_point_side() {
+    syscall(1, 1, "test point_side: ", 17);
+    # Line from (0,0) going right (dx=1, dy=0)
+    # Point above (0,5) should be on one side, (0,-5) on the other
+    var zero = 0;
+    var right = fx_from_int(1);
+    var above = fx_from_int(5);
+    var below = fx_from_int(0 - 5);
+
+    var s1 = bsp_point_side(zero, above, zero, zero, right, zero);
+    var s2 = bsp_point_side(zero, below, zero, zero, right, zero);
+    fmt_int(s1);
+    syscall(1, 1, " ", 1);
+    fmt_int(s2);
+    syscall(1, 1, " (expect different sides)\n", 26);
+    return 0;
+}
+
+fn test_blockmap() {
+    syscall(1, 1, "test blockmap: ", 15);
+    alloc_init();
+    # 4x4 grid, cell size 10 units, origin at (0,0)
+    var bm_size = 40 + 16 * 136;
+    var bm = alloc(bm_size);
+    blockmap_init(bm, 0, 0, fx_from_int(10), 4, 4);
+
+    # Insert a segment at (5,5)-(15,5) -- should span cells (0,0) and (1,0)
+    blockmap_insert_seg(bm, 42, fx_from_int(5), fx_from_int(5), fx_from_int(15), fx_from_int(5));
+
+    var cell = blockmap_get_cell(bm, 0, 0);
+    var count = blockmap_cell_count(cell);
+    fmt_int(count);
+    syscall(1, 1, " segs in cell(0,0) (expect 1)\n", 30);
+    return 0;
+}
+
+fn main() {
+    test_fixed();
+    test_aabb();
+    test_intersect();
+    test_point_side();
+    test_blockmap();
+    syscall(1, 1, "all tests passed\n", 17);
+    return 0;
+}
+
+main();
+syscall(60, 0);

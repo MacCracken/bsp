@@ -1,0 +1,172 @@
+# intersect.cyr -- line/segment/ray intersection tests
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# Coordinates are passed as individual x,y values (not structs)
+# to keep the API simple and avoid heap allocation.
+
+# ================================================================
+# Point-on-side of a line
+# ================================================================
+# Given a line from (lx, ly) in direction (ldx, ldy),
+# determine which side point (px, py) is on.
+# Returns: 0 = right/front, 1 = left/back
+#
+# Uses cross product: (px-lx)*ldy - (py-ly)*ldx
+# Positive = right, negative = left
+
+fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
+    var dx = px - lx;
+    var dy = py - ly;
+    # Shift down to avoid overflow in multiplication
+    var left = ((dx >> 8) * (ldy >> 8)) >> 0;
+    var right = ((dy >> 8) * (ldx >> 8)) >> 0;
+    if (left >= right) { return 0; }
+    return 1;
+}
+
+# ================================================================
+# Segment-segment intersection
+# ================================================================
+# Test if segment (ax1,ay1)-(ax2,ay2) intersects (bx1,by1)-(bx2,by2).
+# Returns 1 if they intersect, 0 if not.
+#
+# Uses parametric form: find t1, t2 where
+#   A1 + t1*(A2-A1) = B1 + t2*(B2-B1)
+# Intersection if 0 <= t1 <= 1 and 0 <= t2 <= 1.
+
+fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
+    var dax = ax2 - ax1;
+    var day = ay2 - ay1;
+    var dbx = bx2 - bx1;
+    var dby = by2 - by1;
+
+    # Cross product for denominator: dax*dby - day*dbx
+    # Shift inputs down to avoid i64 overflow on large coords
+    var denom = (dax >> 8) * (dby >> 8) - (day >> 8) * (dbx >> 8);
+    if (denom == 0) { return 0; }
+
+    var abx = bx1 - ax1;
+    var aby = by1 - ay1;
+
+    # t1 = (abx*dby - aby*dbx) / denom
+    var t1_num = (abx >> 8) * (dby >> 8) - (aby >> 8) * (dbx >> 8);
+    # t2 = (abx*day - aby*dax) / denom
+    var t2_num = (abx >> 8) * (day >> 8) - (aby >> 8) * (dax >> 8);
+
+    # Check 0 <= t1 <= 1 and 0 <= t2 <= 1 without division
+    # t1 = t1_num / denom is in [0,1] iff:
+    #   denom > 0: 0 <= t1_num <= denom
+    #   denom < 0: denom <= t1_num <= 0
+    if (denom > 0) {
+        if (t1_num < 0) { return 0; }
+        if (t1_num > denom) { return 0; }
+        if (t2_num < 0) { return 0; }
+        if (t2_num > denom) { return 0; }
+    } else {
+        if (t1_num > 0) { return 0; }
+        if (t1_num < denom) { return 0; }
+        if (t2_num > 0) { return 0; }
+        if (t2_num < denom) { return 0; }
+    }
+    return 1;
+}
+
+# ================================================================
+# Line-of-sight test
+# ================================================================
+# Can point (sx,sy) see point (tx,ty) without being blocked
+# by any one-sided wall segment?
+#
+# walls = pointer to array of segments, each 32 bytes:
+#   [0] x1, [8] y1, [16] x2, [24] y2 (all fixed-point)
+# wall_count = number of segments
+# twosided_flags = pointer to array of i64 (1=two-sided, 0=one-sided)
+#
+# Returns 1 if visible, 0 if blocked.
+
+fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
+    for (var i = 0; i < wall_count; i = i + 1) {
+        # Skip two-sided walls (they don't block sight)
+        if (load64(twosided_flags + i * 8) != 0) { continue; }
+
+        var base = walls + i * 32;
+        var wx1 = load64(base);
+        var wy1 = load64(base + 8);
+        var wx2 = load64(base + 16);
+        var wy2 = load64(base + 24);
+
+        if (bsp_seg_intersect(sx, sy, tx, ty, wx1, wy1, wx2, wy2) == 1) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+# ================================================================
+# Ray cast
+# ================================================================
+# Cast a ray from (ox, oy) in direction (dx, dy) against a segment
+# (sx1,sy1)-(sx2,sy2). Returns the parametric t along the ray
+# where intersection occurs (0..FX_MAX), or -1 if no hit.
+# The actual intersection point = (ox + t*dx, oy + t*dy).
+
+fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
+    var sdx = sx2 - sx1;
+    var sdy = sy2 - sy1;
+
+    var denom = fx_mul(dx >> 4, sdy >> 4) - fx_mul(dy >> 4, sdx >> 4);
+    if (denom == 0) { return 0 - 1; }
+
+    var abx = sx1 - ox;
+    var aby = sy1 - oy;
+
+    var t_ray = fx_mul(abx >> 4, sdy >> 4) - fx_mul(aby >> 4, sdx >> 4);
+    t_ray = fx_div(t_ray, denom);
+
+    var t_seg = fx_mul(abx >> 4, dy >> 4) - fx_mul(aby >> 4, dx >> 4);
+    t_seg = fx_div(t_seg, denom);
+
+    if (t_ray < 0) { return 0 - 1; }
+    if (t_seg < 0) { return 0 - 1; }
+    if (t_seg > FX_ONE) { return 0 - 1; }
+
+    return t_ray;
+}
+
+# ================================================================
+# Point-to-segment distance (approximate)
+# ================================================================
+# Returns the approximate distance from point (px,py) to the
+# nearest point on segment (sx1,sy1)-(sx2,sy2).
+# Uses projection + DOOM-style approximate distance.
+
+fn bsp_point_seg_dist(px, py, sx1, sy1, sx2, sy2) {
+    var sdx = sx2 - sx1;
+    var sdy = sy2 - sy1;
+    var pdx = px - sx1;
+    var pdy = py - sy1;
+
+    var len_sq = fx_mul(sdx >> 8, sdx >> 8) + fx_mul(sdy >> 8, sdy >> 8);
+    if (len_sq == 0) {
+        # Degenerate segment: distance to endpoint
+        var adx = fx_abs(pdx);
+        var ady = fx_abs(pdy);
+        if (adx > ady) { return adx + (ady >> 1); }
+        return ady + (adx >> 1);
+    }
+
+    # Project point onto line: t = dot(p-s1, s2-s1) / |s2-s1|^2
+    var dot = fx_mul(pdx >> 8, sdx >> 8) + fx_mul(pdy >> 8, sdy >> 8);
+    var t = fx_div(dot, len_sq);
+    t = fx_clamp(t, 0, FX_ONE);
+
+    # Closest point on segment
+    var cx = sx1 + fx_mul(t, sdx);
+    var cy = sy1 + fx_mul(t, sdy);
+
+    # Approximate distance (DOOM's P_AproxDistance)
+    var adx = fx_abs(px - cx);
+    var ady = fx_abs(py - cy);
+    if (adx > ady) { return adx + (ady >> 1); }
+    return ady + (adx >> 1);
+}

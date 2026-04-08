@@ -1,0 +1,22 @@
+# fixed.cyr -- minimal 16.16 fixed-point math for BSP
+# No dependencies. No globals. Pure functions only.
+#
+# Consumers that already have fixed-point math (e.g. cyrius-doom)
+# can skip this file and use their own -- the BSP functions only
+# need the calling convention, not this specific implementation.
+
+enum BspFixed {
+    FX_ONE = 65536;
+    FX_HALF = 32768;
+    FX_MAX = 2147483647;
+    FX_SHIFT = 16;
+}
+
+fn fx_from_int(n) { return n << 16; }
+fn fx_to_int(f) { if (f >= 0) { return f >> 16; } return (f >> 16) | (0 - 1 << 48); }
+fn fx_mul(a, b) { return (a * b) >> 16; }
+fn fx_div(a, b) { if (b == 0) { return FX_MAX; } return (a << 16) / b; }
+fn fx_abs(f) { if (f < 0) { return 0 - f; } return f; }
+fn fx_min(a, b) { if (a < b) { return a; } return b; }
+fn fx_max(a, b) { if (a > b) { return a; } return b; }
+fn fx_clamp(f, lo, hi) { if (f < lo) { return lo; } if (f > hi) { return hi; } return f; }

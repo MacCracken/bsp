@@ -1,0 +1,80 @@
+# traverse.cyr -- BSP tree traversal
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# Two traversal orders:
+#   Front-to-back: for occlusion culling (renderer)
+#   Back-to-front: for painter's algorithm
+#
+# The traversal itself doesn't draw anything -- it calls
+# a visitor function pointer for each subsector reached.
+# The visitor decides what to do (render, query, etc).
+#
+# Since Cyrius doesn't have easy function pointer dispatch yet,
+# we provide the core decision functions and let the caller
+# write their own traversal loop.
+
+# ================================================================
+# Point-on-side of BSP partition line
+# ================================================================
+# Determine which side of node's partition line the point is on.
+# nodes = pointer to nodes array
+# node_idx = which node
+# px, py = point position (fixed-point)
+# Returns: 0 = right/front, 1 = left/back
+
+fn bsp_point_on_side(nodes, node_idx, px, py) {
+    var nx = bsp_node_x(nodes, node_idx);
+    var ny = bsp_node_y(nodes, node_idx);
+    var ndx = bsp_node_dx(nodes, node_idx);
+    var ndy = bsp_node_dy(nodes, node_idx);
+    return bsp_point_side(px, py, nx, ny, ndx, ndy);
+}
+
+# ================================================================
+# Point-to-subsector lookup
+# ================================================================
+# Walk the BSP tree to find which subsector (leaf) contains
+# the given point. Returns the subsector index.
+# nodes = pointer to nodes array
+# node_count = number of nodes (root = node_count - 1)
+# px, py = point position (fixed-point)
+
+fn bsp_find_subsector(nodes, node_count, px, py) {
+    if (node_count == 0) { return 0; }
+
+    var idx = node_count - 1;
+
+    while (bsp_is_subsector(idx) == 0) {
+        var side = bsp_point_on_side(nodes, idx, px, py);
+        if (side == 0) {
+            idx = bsp_node_child_r(nodes, idx);
+        } else {
+            idx = bsp_node_child_l(nodes, idx);
+        }
+    }
+
+    return bsp_subsector_idx(idx);
+}
+
+# ================================================================
+# AABB-in-view test (for traversal culling)
+# ================================================================
+# Test if a bounding box is potentially visible from a viewpoint.
+# Simple test: is the bbox on the same side as the viewpoint,
+# or does it straddle the partition line?
+# Returns 1 if potentially visible, 0 if fully behind.
+
+fn bsp_bbox_visible(bbox, vx, vy, vangle_cos, vangle_sin, fov_half) {
+    # For now: always visible (conservative)
+    # Full frustum culling requires the frustum.cyr module
+    # This is a placeholder for the culling optimization
+    var top = load64(bbox + AABB_TOP);
+    var bottom = load64(bbox + AABB_BOTTOM);
+    var left = load64(bbox + AABB_LEFT);
+    var right = load64(bbox + AABB_RIGHT);
+
+    # Quick reject: if all 4 corners are behind the viewer, skip
+    # (Simple check: is the bbox entirely behind vx,vy?)
+    # This is a rough approximation -- frustum.cyr does it properly
+    return 1;
+}

@@ -1,0 +1,89 @@
+# query.cyr -- spatial queries on BSP trees
+# No globals. Pure functions. All 16.16 fixed-point.
+
+# ================================================================
+# Point containment
+# ================================================================
+# Test if point (px, py) is inside the convex region defined
+# by a set of line segments (subsector boundary).
+#
+# segs = pointer to segment array, each 32 bytes:
+#   [0] x1, [8] y1, [16] x2, [24] y2
+# seg_count = number of segments
+#
+# A point is inside if it's on the same side of all segments
+# (assuming segments form a convex polygon wound consistently).
+
+fn bsp_point_in_subsector(px, py, segs, seg_count) {
+    if (seg_count == 0) { return 0; }
+
+    var first_side = 0 - 1;
+
+    for (var i = 0; i < seg_count; i = i + 1) {
+        var base = segs + i * 32;
+        var x1 = load64(base);
+        var y1 = load64(base + 8);
+        var x2 = load64(base + 16);
+        var y2 = load64(base + 24);
+
+        var side = bsp_point_side(px, py, x1, y1, x2 - x1, y2 - y1);
+
+        if (first_side < 0) {
+            first_side = side;
+        } else {
+            if (side != first_side) { return 0; }
+        }
+    }
+
+    return 1;
+}
+
+# ================================================================
+# Nearest segment to point
+# ================================================================
+# Find the index of the nearest segment to point (px, py).
+# segs = pointer to segment array (32 bytes each)
+# seg_count = number of segments
+# Returns segment index, or -1 if no segments.
+
+fn bsp_nearest_seg(px, py, segs, seg_count) {
+    if (seg_count == 0) { return 0 - 1; }
+
+    var best_idx = 0;
+    var best_dist = 2147483647;
+
+    for (var i = 0; i < seg_count; i = i + 1) {
+        var base = segs + i * 32;
+        var x1 = load64(base);
+        var y1 = load64(base + 8);
+        var x2 = load64(base + 16);
+        var y2 = load64(base + 24);
+
+        var dist = bsp_point_seg_dist(px, py, x1, y1, x2, y2);
+
+        if (dist < best_dist) {
+            best_dist = dist;
+            best_idx = i;
+        }
+    }
+
+    return best_idx;
+}
+
+# ================================================================
+# Count entities in AABB
+# ================================================================
+# Given an array of entity positions (16 bytes each: x, y),
+# count how many fall within the given bounding box.
+
+fn bsp_count_in_aabb(box, entities, entity_count) {
+    var count = 0;
+    for (var i = 0; i < entity_count; i = i + 1) {
+        var ex = load64(entities + i * 16);
+        var ey = load64(entities + i * 16 + 8);
+        if (aabb_contains_point(box, ex, ey) == 1) {
+            count = count + 1;
+        }
+    }
+    return count;
+}
