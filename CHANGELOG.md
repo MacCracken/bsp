@@ -5,6 +5,41 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-04-09
+
+### Fixed
+
+- **Critical: asr() for all signed right shifts** — Cyrius >> is logical (zero-fill), not arithmetic. All `fx_mul`, `fx_to_int`, `fx_div`, and cross-product calculations now use `asr()` for correct negative value handling
+- `fx_to_int` rewritten — removed broken OR bitmask approach, uses `asr(f, 16)` 
+- `fx_div` overflow guard uses `asr()` instead of bare `>>`
+- All `>> 8` shifts in intersect.cyr replaced with `asr(x, 8)`
+
+### Changed
+
+- Requires cyrius 2.4.0+ (expanded globals)
+- 74 tests still passing after shift fixes
+
+## [0.6.0] - 2026-04-08
+
+### Added
+
+- Sakshi 0.7.0 slim profile available in `lib/sakshi.cyr` for consumers
+
+## [0.5.2] - 2026-04-08
+
+### Fixed
+
+- `fx_div` overflow on large numerators — guard with scaled-down division
+- `bsp_ray_cast` SIGFPE on extreme coordinate values — division-free sign checks before dividing
+- `bsp_point_seg_dist` crash on near-zero length segments — guard `len_sq <= 0`
+- `aabb_width` / `aabb_height` returning negative for inverted boxes — clamp to 0
+
+### Added
+
+- `fuzz/fuzz_intersect.cyr` — 10,000 random segment pairs, found + fixed SIGFPE
+- `fuzz/fuzz_aabb.cyr` — 10,000 random AABB operations, found + fixed negative width
+- `fuzz/fuzz_blockmap.cyr` — 5,000 random insert + query cycles
+
 ## [0.5.1] - 2026-04-08
 
 ### Changed

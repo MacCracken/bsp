@@ -1,0 +1,81 @@
+# Fuzz: blockmap insert + query with random segments and points
+# Verify no out-of-bounds, no crashes on edge cases
+
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/args.cyr"
+
+include "src/lib.cyr"
+
+var _fz_state = 77777;
+
+fn _fz_rand() {
+    _fz_state = _fz_state * 6364136223846793005 + 1442695040888963407;
+    return _fz_state;
+}
+
+fn _fz_coord() {
+    var r = _fz_rand();
+    if (r < 0) { r = 0 - r; }
+    return fx_from_int(r % 1024);
+}
+
+fn main() {
+    alloc_init();
+    args_init();
+
+    var iters = 5000;
+    if (argc() > 1) { iters = str_to_int(str_from(argv(1))); }
+
+    _fz_state = 77777;
+    if (argc() > 2) { _fz_state = str_to_int(str_from(argv(2))); }
+
+    # 16x16 grid, cell size 64 units
+    var bm_size = 40 + 256 * 136;
+    var bm = alloc(bm_size);
+    var results = alloc(256);
+
+    for (var i = 0; i < iters; i = i + 1) {
+        var op = _fz_rand();
+        if (op < 0) { op = 0 - op; }
+        op = op % 3;
+
+        if (op == 0) {
+            # Re-init blockmap (fresh grid)
+            blockmap_init(bm, 0, 0, fx_from_int(64), 16, 16);
+        }
+
+        if (op == 1) {
+            # Insert random segment
+            var x1 = _fz_coord();
+            var y1 = _fz_coord();
+            var x2 = _fz_coord();
+            var y2 = _fz_coord();
+            var seg_id = _fz_rand();
+            if (seg_id < 0) { seg_id = 0 - seg_id; }
+            blockmap_insert_seg(bm, seg_id % 1000, x1, y1, x2, y2);
+        }
+
+        if (op == 2) {
+            # Query random point
+            var px = _fz_coord();
+            var py = _fz_coord();
+            var radius = _fz_coord();
+            var n = blockmap_query_point(bm, px, py, radius, results, 32);
+            if (n < 0) {
+                syscall(1, 2, "FAIL: negative query result\n", 28);
+                syscall(60, 1);
+            }
+        }
+    }
+
+    syscall(1, 1, "fuzz_blockmap: ", 15);
+    fmt_int(iters);
+    syscall(1, 1, " iterations OK\n", 15);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

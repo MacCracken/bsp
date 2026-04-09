@@ -76,12 +76,16 @@ fn aabb_merge(a, b) {
 
 # Compute width of AABB
 fn aabb_width(box) {
-    return load64(box + AABB_RIGHT) - load64(box + AABB_LEFT);
+    var w = load64(box + AABB_RIGHT) - load64(box + AABB_LEFT);
+    if (w < 0) { return 0; }
+    return w;
 }
 
 # Compute height of AABB
 fn aabb_height(box) {
-    return load64(box + AABB_TOP) - load64(box + AABB_BOTTOM);
+    var h = load64(box + AABB_TOP) - load64(box + AABB_BOTTOM);
+    if (h < 0) { return 0; }
+    return h;
 }
 
 # Compute center X

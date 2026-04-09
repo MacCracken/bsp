@@ -18,8 +18,8 @@ fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
     var dx = px - lx;
     var dy = py - ly;
     # Shift down to avoid overflow in multiplication
-    var left = ((dx >> 8) * (ldy >> 8)) >> 0;
-    var right = ((dy >> 8) * (ldx >> 8)) >> 0;
+    var left = (asr(dx, 8) * asr(ldy, 8)) ;
+    var right = (asr(dy, 8) * asr(ldx, 8)) ;
     if (left >= right) { return 0; }
     return 1;
 }
@@ -42,16 +42,16 @@ fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
 
     # Cross product for denominator: dax*dby - day*dbx
     # Shift inputs down to avoid i64 overflow on large coords
-    var denom = (dax >> 8) * (dby >> 8) - (day >> 8) * (dbx >> 8);
+    var denom = asr(dax, 8) * asr(dby, 8) - asr(day, 8) * asr(dbx, 8);
     if (denom == 0) { return 0; }
 
     var abx = bx1 - ax1;
     var aby = by1 - ay1;
 
     # t1 = (abx*dby - aby*dbx) / denom
-    var t1_num = (abx >> 8) * (dby >> 8) - (aby >> 8) * (dbx >> 8);
+    var t1_num = asr(abx, 8) * asr(dby, 8) - asr(aby, 8) * asr(dbx, 8);
     # t2 = (abx*day - aby*dax) / denom
-    var t2_num = (abx >> 8) * (day >> 8) - (aby >> 8) * (dax >> 8);
+    var t2_num = asr(abx, 8) * asr(day, 8) - asr(aby, 8) * asr(dax, 8);
 
     # Check 0 <= t1 <= 1 and 0 <= t2 <= 1 without division
     # t1 = t1_num / denom is in [0,1] iff:
@@ -114,23 +114,28 @@ fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
     var sdx = sx2 - sx1;
     var sdy = sy2 - sy1;
 
-    var denom = fx_mul(dx >> 4, sdy >> 4) - fx_mul(dy >> 4, sdx >> 4);
+    var denom = asr(dx, 8) * asr(sdy, 8) - asr(dy, 8) * asr(sdx, 8);
     if (denom == 0) { return 0 - 1; }
 
     var abx = sx1 - ox;
     var aby = sy1 - oy;
 
-    var t_ray = fx_mul(abx >> 4, sdy >> 4) - fx_mul(aby >> 4, sdx >> 4);
-    t_ray = fx_div(t_ray, denom);
+    var t_ray_num = asr(abx, 8) * asr(sdy, 8) - asr(aby, 8) * asr(sdx, 8);
+    var t_seg_num = asr(abx, 8) * asr(dy, 8) - asr(aby, 8) * asr(dx, 8);
 
-    var t_seg = fx_mul(abx >> 4, dy >> 4) - fx_mul(aby >> 4, dx >> 4);
-    t_seg = fx_div(t_seg, denom);
+    # Check signs without division
+    if (denom > 0) {
+        if (t_ray_num < 0) { return 0 - 1; }
+        if (t_seg_num < 0) { return 0 - 1; }
+        if (t_seg_num > denom) { return 0 - 1; }
+    } else {
+        if (t_ray_num > 0) { return 0 - 1; }
+        if (t_seg_num > 0) { return 0 - 1; }
+        if (t_seg_num < denom) { return 0 - 1; }
+    }
 
-    if (t_ray < 0) { return 0 - 1; }
-    if (t_seg < 0) { return 0 - 1; }
-    if (t_seg > FX_ONE) { return 0 - 1; }
-
-    return t_ray;
+    # Safe to divide now (denom != 0, signs checked)
+    return fx_div(t_ray_num, denom);
 }
 
 # ================================================================
@@ -147,7 +152,7 @@ fn bsp_point_seg_dist(px, py, sx1, sy1, sx2, sy2) {
     var pdy = py - sy1;
 
     var len_sq = fx_mul(sdx >> 8, sdx >> 8) + fx_mul(sdy >> 8, sdy >> 8);
-    if (len_sq == 0) {
+    if (len_sq <= 0) {
         # Degenerate segment: distance to endpoint
         var adx = fx_abs(pdx);
         var ady = fx_abs(pdy);

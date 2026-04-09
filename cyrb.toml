@@ -1,5 +1,5 @@
 name = "bsp"
-version = "0.5.1"
+version = "0.7.0"
 license = "GPL-3.0-only"
 description = "BSP — Binary Space Partitioning. Spatial geometry primitives for Cyrius."
 repository = "https://github.com/MacCracken/bsp"
