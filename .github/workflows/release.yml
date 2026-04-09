@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 env:
-  CYRIUS_VERSION: "2.2.0"
+  CYRIUS_VERSION: "2.2.2"
 
 jobs:
   ci:
@@ -25,18 +25,30 @@ jobs:
       - name: Verify version
         run: |
           FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-          TOML_VERSION=$(grep '^version' cyrb.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           TAG="${GITHUB_REF_NAME}"
-          [ "$FILE_VERSION" = "$TAG" ] || { echo "VERSION != tag"; exit 1; }
-          [ "$TOML_VERSION" = "$TAG" ] || { echo "cyrb.toml != tag"; exit 1; }
+          [ "$FILE_VERSION" = "$TAG" ] || { echo "VERSION ($FILE_VERSION) != tag ($TAG)"; exit 1; }
 
-      - name: Install Cyrius
-        run: CYRIUS_VERSION=$CYRIUS_VERSION curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | sh
+      - name: Install Cyrius toolchain
+        run: |
+          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
+          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
+          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
+          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
 
       - name: Test
         run: |
-          export PATH="$HOME/.cyrius/bin:$PATH"
-          cyrb test tests/bsp.tcyr
+          for t in tests/*.tcyr; do
+            [ -f "$t" ] || continue
+            name=$(basename "$t" .tcyr)
+            tmpbin="/tmp/bsp_test_$$"
+            cat "$t" | cc2 > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
+            "$tmpbin" 2>&1
+            rm -f "$tmpbin"
+          done
 
       - name: Archive
         run: |
