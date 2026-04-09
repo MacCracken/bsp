@@ -5,6 +5,14 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-04-08
+
+### Changed
+
+- CI uses `cyrb test` / `cyrb bench` via install script
+- Added `cyrb.toml` with stdlib deps, test and bench entries
+- Release workflow bootstraps Cyrius from upstream install script
+
 ## [0.5.0] - 2026-04-08
 
 ### Added

@@ -21,108 +21,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Cyrius toolchain
-        run: |
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p build lib
-          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
-          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb 2>/dev/null || true
-          cp "$CYRIUS_HOME/lib/"*.cyr ./lib/ 2>/dev/null || true
-          chmod +x ./build/*
-          echo "Cyrius $CYRIUS_VERSION installed"
+      - name: Install Cyrius
+        run: CYRIUS_VERSION=$CYRIUS_VERSION curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | sh
 
-      - name: Build test binary
+      - name: Test
         run: |
-          cat tests/bsp.tcyr | ./build/cc2 2>/dev/null > build/test_bsp
-          chmod +x build/test_bsp
-          echo "test binary: $(wc -c < build/test_bsp) bytes"
+          export PATH="$HOME/.cyrius/bin:$PATH"
+          cyrb test tests/bsp.tcyr
 
-      - name: Run tests
+      - name: Bench
         run: |
-          OUTPUT=$(./build/test_bsp 2>&1)
-          echo "$OUTPUT"
-          echo "$OUTPUT" | grep -q "0 failed"
-          echo "PASS: all tests"
-
-      - name: Build bench binary
-        run: |
-          cat benches/bsp.bcyr | ./build/cc2 2>/dev/null > build/bench_bsp
-          chmod +x build/bench_bsp
-          echo "bench binary: $(wc -c < build/bench_bsp) bytes"
-
-      - name: Run benchmarks
-        run: ./build/bench_bsp
+          export PATH="$HOME/.cyrius/bin:$PATH"
+          cyrb bench benches/bsp.bcyr
         continue-on-error: true
-
-  check:
-    name: Check & Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Cyrius toolchain
-        run: |
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p build lib
-          cp "$CYRIUS_HOME/bin/"* ./build/ 2>/dev/null || true
-          cp "$CYRIUS_HOME/lib/"*.cyr ./lib/ 2>/dev/null || true
-          chmod +x ./build/*
-
-      - name: Syntax check (all modules)
-        run: |
-          cat tests/bsp.tcyr | ./build/cc2 2>/dev/null > /dev/null
-          echo "PASS: library + tests compile"
-
-      - name: Source stats
-        run: |
-          echo "=== Library ==="
-          wc -l src/*.cyr
-          echo "=== Tests ==="
-          wc -l tests/*.tcyr
-          echo "=== Benchmarks ==="
-          wc -l benches/*.bcyr
 
   security:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Scan for dangerous patterns
+      - name: No syscalls in pure geometry
         run: |
-          WARN=0
-          if grep -rn 'syscall(59' src/ 2>/dev/null | grep -v "# "; then
-            echo "WARN: raw execve in library"; WARN=1
-          fi
-          # Library should have zero syscalls (pure geometry)
           if grep -rn 'syscall(' src/ 2>/dev/null | grep -v "# "; then
-            echo "WARN: syscalls in pure geometry library"; WARN=1
+            echo "FAIL: syscalls in pure geometry library"; exit 1
           fi
-          echo "security scan complete (warnings: $WARN)"
+          echo "PASS: no syscalls"
 
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Check required docs
         run: |
           MISSING=0
-          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md LICENSE cyrius.toml; do
+          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md LICENSE cyrb.toml; do
             if [ -f "$doc" ]; then echo "  OK: $doc"; else echo "  MISSING: $doc"; MISSING=1; fi
           done
           exit $MISSING
-
       - name: Verify version consistency
         run: |
           VERSION=$(cat VERSION | tr -d '[:space:]')
-          TOML_VERSION=$(grep '^version' cyrius.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          echo "VERSION: $VERSION  cyrius.toml: $TOML_VERSION"
+          TOML_VERSION=$(grep '^version' cyrb.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           [ "$VERSION" = "$TOML_VERSION" ] || { echo "FAIL: version mismatch"; exit 1; }
           grep -q "$VERSION" CHANGELOG.md || { echo "FAIL: version not in changelog"; exit 1; }
-          echo "Version consistent"
