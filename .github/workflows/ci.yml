@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CYRIUS_VERSION: "2.6.2"
+  CYRIUS_VERSION: "3.2.5"
 
 jobs:
   build-and-test:
@@ -39,7 +39,7 @@ jobs:
             [ -f "$t" ] || continue
             name=$(basename "$t" .tcyr)
             tmpbin="/tmp/bsp_test_$$"
-            cat "$t" | cc2 > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
+            cat "$t" | cc3 > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
             ec=0; output=$("$tmpbin" 2>&1) || ec=$?
             rm -f "$tmpbin"
             summary=$(echo "$output" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1)
@@ -58,7 +58,7 @@ jobs:
             [ -f "$b" ] || continue
             name=$(basename "$b" .bcyr)
             tmpbin="/tmp/bsp_bench_$$"
-            cat "$b" | cc2 > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
+            cat "$b" | cc3 > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
             echo "=== $name ==="
             "$tmpbin" 2>&1 || true
             rm -f "$tmpbin"
