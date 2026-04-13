@@ -34,41 +34,34 @@ fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
 #   A1 + t1*(A2-A1) = B1 + t2*(B2-B1)
 # Intersection if 0 <= t1 <= 1 and 0 <= t2 <= 1.
 
-fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
-    var dax = ax2 - ax1;
-    var day = ay2 - ay1;
-    var dbx = bx2 - bx1;
-    var dby = by2 - by1;
-
-    # Cross product for denominator: dax*dby - day*dbx
-    # Shift inputs down to avoid i64 overflow on large coords
-    var denom = asr(dax, 8) * asr(dby, 8) - asr(day, 8) * asr(dbx, 8);
-    if (denom == 0) { return 0; }
-
-    var abx = bx1 - ax1;
-    var aby = by1 - ay1;
-
-    # t1 = (abx*dby - aby*dbx) / denom
-    var t1_num = asr(abx, 8) * asr(dby, 8) - asr(aby, 8) * asr(dbx, 8);
-    # t2 = (abx*day - aby*dax) / denom
-    var t2_num = asr(abx, 8) * asr(day, 8) - asr(aby, 8) * asr(dax, 8);
-
-    # Check 0 <= t1 <= 1 and 0 <= t2 <= 1 without division
-    # t1 = t1_num / denom is in [0,1] iff:
-    #   denom > 0: 0 <= t1_num <= denom
-    #   denom < 0: denom <= t1_num <= 0
+fn _seg_check(denom, t1_num, t2_num) {
     if (denom > 0) {
         if (t1_num < 0) { return 0; }
         if (t1_num > denom) { return 0; }
         if (t2_num < 0) { return 0; }
         if (t2_num > denom) { return 0; }
-    } else {
+    }
+    if (denom < 0) {
         if (t1_num > 0) { return 0; }
         if (t1_num < denom) { return 0; }
         if (t2_num > 0) { return 0; }
         if (t2_num < denom) { return 0; }
     }
     return 1;
+}
+
+fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
+    var dax = ax2 - ax1;
+    var day = ay2 - ay1;
+    var dbx = bx2 - bx1;
+    var dby = by2 - by1;
+    var denom = asr(dax, 8) * asr(dby, 8) - asr(day, 8) * asr(dbx, 8);
+    if (denom == 0) { return 0; }
+    var abx = bx1 - ax1;
+    var aby = by1 - ay1;
+    var t1_num = asr(abx, 8) * asr(dby, 8) - asr(aby, 8) * asr(dbx, 8);
+    var t2_num = asr(abx, 8) * asr(day, 8) - asr(aby, 8) * asr(dax, 8);
+    return _seg_check(denom, t1_num, t2_num);
 }
 
 # ================================================================

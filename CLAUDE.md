@@ -6,10 +6,10 @@
 
 - **Type**: Shared library — geometry foundation for games, compositors, spatial systems
 - **License**: GPL-3.0-only
-- **Language**: Cyrius (native, compiled via cc2)
+- **Language**: Cyrius (native, compiled via cc3)
 - **Version**: SemVer, version file at `VERSION`
-- **Binary contribution**: ~2KB compiled (821 lines across 8 modules)
-- **Status**: v0.6.0 — 74 tests passing, 13 benchmarks sub-microsecond, 3 fuzz harnesses
+- **Binary contribution**: ~2KB compiled (821 lines across 9 modules)
+- **Status**: v0.9.0 — 74 tests passing, 13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)
@@ -97,22 +97,23 @@ src/
 ## Build & Test Commands
 
 ```sh
+# Build
+cyrius build src/lib.cyr build/bsp
+
 # Test (74 assertions)
-cat tests/bsp.tcyr | cc2 > build/test && chmod +x build/test && ./build/test
+cyrius test
 
 # Benchmark (13 ops, all sub-microsecond)
-cat benches/bsp.bcyr | cc2 > build/bench && chmod +x build/bench && ./build/bench
+cyrius build benches/bsp.bcyr build/bench && ./build/bench
 
 # Fuzz (3 harnesses: intersect, aabb, blockmap)
-cyrius fuzz
+cyrius build fuzz/fuzz_intersect.cyr build/fuzz_i && ./build/fuzz_i
 
-# Consumer usage
-include "bsp/src/lib.cyr"    # from bsp repo root
-# or via cyrius.toml git dep:
+# Consumer usage via cyrius.toml git dep:
 # [deps.bsp]
 # git = "https://github.com/MacCracken/bsp"
-# tag = "0.6.0"
-# modules = ["src/fixed.cyr", "src/aabb.cyr", ...]
+# tag = "0.9.0"
+# modules = ["src/lib.cyr"]
 ```
 
 ## DO NOT

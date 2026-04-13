@@ -5,6 +5,17 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-04-13
+
+### Changed
+
+- **cyrius.toml [deps] system** — stdlib dependencies (string, alloc, vec, fmt, args, assert, bench) declared in cyrius.toml and auto-resolved via `cyrius deps`. Removed 24 unused vendored stdlib modules from `lib/` (31 → 7 files).
+- **Fuzz harnesses fixed** — replaced `str_to_int(str_from(argv(N)))` with `atoi(argv(N))` (stdlib function). Removed unused `vec.cyr` include from fuzz files. Eliminates `str_to_int`/`str_from` undefined function warnings.
+- **Segment intersection refactored** — extracted `_seg_check()` helper from `bsp_seg_intersect()` for cleaner factoring of division-free range checks.
+- Removed stale `cyrb.toml` (replaced by `cyrius.toml`)
+- Minimum Cyrius version: 3.10.1 (auto-include, undefined function diagnostic)
+- 74 tests, 13 benchmarks, 3 fuzz harnesses (25K iterations) all passing
+
 ## [0.7.1] - 2026-04-09
 
 ### Changed

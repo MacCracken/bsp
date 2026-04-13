@@ -3,7 +3,6 @@
 
 include "lib/string.cyr"
 include "lib/alloc.cyr"
-include "lib/vec.cyr"
 include "lib/fmt.cyr"
 include "lib/args.cyr"
 
@@ -27,10 +26,10 @@ fn main() {
     args_init();
 
     var iters = 10000;
-    if (argc() > 1) { iters = str_to_int(str_from(argv(1))); }
+    if (argc() > 1) { iters = atoi(argv(1)); }
 
     _fz_state = 98765;
-    if (argc() > 2) { _fz_state = str_to_int(str_from(argv(2))); }
+    if (argc() > 2) { _fz_state = atoi(argv(2)); }
 
     for (var i = 0; i < iters; i = i + 1) {
         var ax1 = _fz_coord();
