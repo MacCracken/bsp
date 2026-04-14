@@ -5,6 +5,12 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-04-14
+
+### Changed
+
+- **Cyrius 4.6.2** — rebuilt and verified. 74/74 tests pass, 13 benchmarks all sub-microsecond, 3 fuzz harnesses (25K iterations) pass. No code changes. Minimum version bumped.
+
 ## [1.0.0] - 2026-04-13
 
 ### Stable Release

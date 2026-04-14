@@ -1,10 +1,10 @@
 [package]
 name = "bsp"
-version = "1.0.0"
+version = "1.0.1"
 description = "BSP — Binary Space Partitioning. Spatial geometry primitives for Cyrius."
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "4.4.3"
+cyrius = "4.6.2"
 
 [build]
 entry = "src/lib.cyr"
