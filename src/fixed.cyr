@@ -13,8 +13,8 @@ enum BspFixed {
 
 fn asr(val, bits) {
     if (val >= 0) { return val >> bits; }
-    var pos = 0 - val;
-    return 0 - (pos >> bits);
+    var pos = -val;
+    return -(pos >> bits);
 }
 
 fn fx_from_int(n) { return n << 16; }
@@ -26,11 +26,11 @@ fn fx_div(a, b) {
     var aa = a;
     var bb = b;
     if (aa > 32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
-    if (aa < 0 - 32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
+    if (aa < -32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
     return (aa << 16) / bb;
 }
 
-fn fx_abs(f) { if (f < 0) { return 0 - f; } return f; }
+fn fx_abs(f) { if (f < 0) { return -f; } return f; }
 fn fx_min(a, b) { if (a < b) { return a; } return b; }
 fn fx_max(a, b) { if (a > b) { return a; } return b; }
 fn fx_clamp(f, lo, hi) { if (f < lo) { return lo; } if (f > hi) { return hi; } return f; }

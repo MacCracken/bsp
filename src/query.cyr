@@ -19,7 +19,7 @@ fn bsp_point_in_subsector(px, py, segs, seg_count) {
 
     var first_side = 0 - 1;
 
-    for (var i = 0; i < seg_count; i = i + 1) {
+    for (var i = 0; i < seg_count; i += 1) {
         var base = segs + i * 32;
         var x1 = load64(base);
         var y1 = load64(base + 8);
@@ -52,7 +52,7 @@ fn bsp_nearest_seg(px, py, segs, seg_count) {
     var best_idx = 0;
     var best_dist = 2147483647;
 
-    for (var i = 0; i < seg_count; i = i + 1) {
+    for (var i = 0; i < seg_count; i += 1) {
         var base = segs + i * 32;
         var x1 = load64(base);
         var y1 = load64(base + 8);
@@ -78,11 +78,11 @@ fn bsp_nearest_seg(px, py, segs, seg_count) {
 
 fn bsp_count_in_aabb(box, entities, entity_count) {
     var count = 0;
-    for (var i = 0; i < entity_count; i = i + 1) {
+    for (var i = 0; i < entity_count; i += 1) {
         var ex = load64(entities + i * 16);
         var ey = load64(entities + i * 16 + 8);
         if (aabb_contains_point(box, ex, ey) == 1) {
-            count = count + 1;
+            count += 1;
         }
     }
     return count;

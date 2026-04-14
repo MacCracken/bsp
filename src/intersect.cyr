@@ -78,7 +78,7 @@ fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
 # Returns 1 if visible, 0 if blocked.
 
 fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
-    for (var i = 0; i < wall_count; i = i + 1) {
+    for (var i = 0; i < wall_count; i += 1) {
         # Skip two-sided walls (they don't block sight)
         if (load64(twosided_flags + i * 8) != 0) { continue; }
 

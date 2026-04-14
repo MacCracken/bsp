@@ -5,6 +5,27 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-04-13
+
+### Stable Release
+
+BSP is production-ready. API stable. Used as primary spatial geometry library for cyrius-doom.
+
+### Changed
+
+- **Cyrius 4.4.3 modernization** — negative literals (`-val` instead of `0 - val`), compound assignment (`+=` for loop counters and accumulators), `cyrius = "4.4.3"` minimum in cyrius.toml. 10+ modernizations across fixed.cyr, frustum.cyr, blockmap.cyr, intersect.cyr, query.cyr.
+- Bumped from 0.9.0 → 1.0.0 to signal API stability. No breaking changes.
+
+### Stability Guarantees
+
+- **API**: All public functions documented in README/CLAUDE.md stable across 1.x
+- **Zero globals**: library uses no global state (consumer owns all data)
+- **Zero dependencies**: no stdlib in library core (only in tests/bench/fuzz harnesses)
+- **Zero heap allocation**: callers provide all buffers
+- **All math is 16.16 fixed-point**: no FPU required
+- **74 tests**, 13 benchmarks, 3 fuzz harnesses passing on cc3 4.4.3
+- Byte-identical compilation on both x86_64 and aarch64 backends
+
 ## [0.9.0] - 2026-04-13
 
 ### Changed

@@ -41,7 +41,7 @@ fn blockmap_init(buf, origin_x, origin_y, cell_size, cols, rows) {
 
     # Zero all cell counts
     var total_cells = cols * rows;
-    for (var i = 0; i < total_cells; i = i + 1) {
+    for (var i = 0; i < total_cells; i += 1) {
         store64(buf + BM_DATA + i * BM_CELL_STRIDE, 0);
     }
     return buf;
@@ -95,8 +95,8 @@ fn blockmap_insert_seg(bm, seg_idx, x1, y1, x2, y2) {
     if (c2 >= cols) { c2 = cols - 1; }
     if (r2 >= rows) { r2 = rows - 1; }
 
-    for (var r = r1; r <= r2; r = r + 1) {
-        for (var c = c1; c <= c2; c = c + 1) {
+    for (var r = r1; r <= r2; r += 1) {
+        for (var c = c1; c <= c2; c += 1) {
             blockmap_add(bm, c, r, seg_idx);
         }
     }
@@ -143,15 +143,15 @@ fn blockmap_query_point(bm, px, py, radius, out_buf, out_max) {
     if (r2 >= rows) { r2 = rows - 1; }
 
     var out_count = 0;
-    for (var r = r1; r <= r2; r = r + 1) {
-        for (var c = c1; c <= c2; c = c + 1) {
+    for (var r = r1; r <= r2; r += 1) {
+        for (var c = c1; c <= c2; c += 1) {
             var cell = blockmap_get_cell(bm, c, r);
             if (cell != 0) {
                 var n = blockmap_cell_count(cell);
-                for (var i = 0; i < n; i = i + 1) {
+                for (var i = 0; i < n; i += 1) {
                     if (out_count < out_max) {
                         store64(out_buf + out_count * 8, blockmap_cell_seg(cell, i));
-                        out_count = out_count + 1;
+                        out_count += 1;
                     }
                 }
             }

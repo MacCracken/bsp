@@ -6,10 +6,10 @@
 
 - **Type**: Shared library — geometry foundation for games, compositors, spatial systems
 - **License**: GPL-3.0-only
-- **Language**: Cyrius (native, compiled via cc3)
+- **Language**: Cyrius (native, compiled via cc3 4.4.3)
 - **Version**: SemVer, version file at `VERSION`
 - **Binary contribution**: ~2KB compiled (821 lines across 9 modules)
-- **Status**: v0.9.0 — 74 tests passing, 13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations)
+- **Status**: v1.0.0 — STABLE. 74 tests passing, 13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations). Production-ready, API stable, used by cyrius-doom.
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)

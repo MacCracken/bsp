@@ -32,10 +32,10 @@ enum FrustumField {
 fn frustum_build(fr, vx, vy, left_cos, left_sin, right_cos, right_sin) {
     # Left plane normal points inward (perpendicular to left edge, clockwise)
     store64(fr + FR_LEFT_NX, left_sin);
-    store64(fr + FR_LEFT_NY, 0 - left_cos);
+    store64(fr + FR_LEFT_NY, -left_cos);
 
     # Right plane normal points inward
-    store64(fr + FR_RIGHT_NX, 0 - right_sin);
+    store64(fr + FR_RIGHT_NX, -right_sin);
     store64(fr + FR_RIGHT_NY, right_cos);
 
     store64(fr + FR_VIEW_X, vx);
@@ -84,18 +84,18 @@ fn frustum_test_aabb(fr, box) {
 
     # Test left plane: if all 4 corners have negative dot product, reject
     var l_fail = 0;
-    if (fx_mul((left - vx) >> 4, lnx >> 4) + fx_mul((top - vy) >> 4, lny >> 4) < 0) { l_fail = l_fail + 1; }
-    if (fx_mul((right - vx) >> 4, lnx >> 4) + fx_mul((top - vy) >> 4, lny >> 4) < 0) { l_fail = l_fail + 1; }
-    if (fx_mul((left - vx) >> 4, lnx >> 4) + fx_mul((bot - vy) >> 4, lny >> 4) < 0) { l_fail = l_fail + 1; }
-    if (fx_mul((right - vx) >> 4, lnx >> 4) + fx_mul((bot - vy) >> 4, lny >> 4) < 0) { l_fail = l_fail + 1; }
+    if (fx_mul((left - vx) >> 4, lnx >> 4) + fx_mul((top - vy) >> 4, lny >> 4) < 0) { l_fail += 1; }
+    if (fx_mul((right - vx) >> 4, lnx >> 4) + fx_mul((top - vy) >> 4, lny >> 4) < 0) { l_fail += 1; }
+    if (fx_mul((left - vx) >> 4, lnx >> 4) + fx_mul((bot - vy) >> 4, lny >> 4) < 0) { l_fail += 1; }
+    if (fx_mul((right - vx) >> 4, lnx >> 4) + fx_mul((bot - vy) >> 4, lny >> 4) < 0) { l_fail += 1; }
     if (l_fail == 4) { return 0; }
 
     # Test right plane
     var r_fail = 0;
-    if (fx_mul((left - vx) >> 4, rnx >> 4) + fx_mul((top - vy) >> 4, rny >> 4) < 0) { r_fail = r_fail + 1; }
-    if (fx_mul((right - vx) >> 4, rnx >> 4) + fx_mul((top - vy) >> 4, rny >> 4) < 0) { r_fail = r_fail + 1; }
-    if (fx_mul((left - vx) >> 4, rnx >> 4) + fx_mul((bot - vy) >> 4, rny >> 4) < 0) { r_fail = r_fail + 1; }
-    if (fx_mul((right - vx) >> 4, rnx >> 4) + fx_mul((bot - vy) >> 4, rny >> 4) < 0) { r_fail = r_fail + 1; }
+    if (fx_mul((left - vx) >> 4, rnx >> 4) + fx_mul((top - vy) >> 4, rny >> 4) < 0) { r_fail += 1; }
+    if (fx_mul((right - vx) >> 4, rnx >> 4) + fx_mul((top - vy) >> 4, rny >> 4) < 0) { r_fail += 1; }
+    if (fx_mul((left - vx) >> 4, rnx >> 4) + fx_mul((bot - vy) >> 4, rny >> 4) < 0) { r_fail += 1; }
+    if (fx_mul((right - vx) >> 4, rnx >> 4) + fx_mul((bot - vy) >> 4, rny >> 4) < 0) { r_fail += 1; }
     if (r_fail == 4) { return 0; }
 
     return 1;
