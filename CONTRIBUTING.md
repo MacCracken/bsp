@@ -2,8 +2,8 @@
 
 ## Development
 
-1. Install Cyrius compiler (cc2)
-2. `cyrb build` to compile
+1. Install Cyrius compiler (cc5, 5.5.0+)
+2. `cyrius build src/lib.cyr build/bsp` to compile
 3. Test programs in `programs/`
 
 ## Constraints

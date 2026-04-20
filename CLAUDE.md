@@ -6,10 +6,10 @@
 
 - **Type**: Shared library — geometry foundation for games, compositors, spatial systems
 - **License**: GPL-3.0-only
-- **Language**: Cyrius (native, compiled via cc3 4.6.2)
+- **Language**: Cyrius (native, compiled via cc5 5.5.0)
 - **Version**: SemVer, version file at `VERSION`
-- **Binary contribution**: ~2KB compiled (821 lines across 9 modules)
-- **Status**: v1.0.1 — STABLE. 74 tests passing, 13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations). Production-ready, API stable, used by cyrius-doom.
+- **Binary contribution**: ~2KB compiled (837 lines across 9 modules)
+- **Status**: v1.0.2 — STABLE on Cyrius 5.5.0. 74 tests passing, 13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations). Production-ready, API stable, used by cyrius-doom.
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)
@@ -64,7 +64,7 @@ src/
 ### Work Loop (continuous)
 
 1. Work phase — implement, fix, optimize
-2. Build check: `cyrius build` or `cat tests/bsp.tcyr | cc2 > build/test && ./build/test`
+2. Build check: `cyrius build` or `cat tests/bsp.tcyr | cc5 > build/test && ./build/test`
 3. Run tests: `cyrius test tests/bsp.tcyr` — assert "0 failed"
 4. Run benchmarks: `cyrius bench benches/bsp.bcyr` — all sub-microsecond
 5. Run fuzz: `cyrius fuzz` — fuzz/fuzz_intersect.cyr, fuzz/fuzz_aabb.cyr, fuzz/fuzz_blockmap.cyr

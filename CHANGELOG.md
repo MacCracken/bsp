@@ -5,6 +5,14 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-04-20
+
+### Changed
+
+- **Cyrius 5.5.0** — toolchain bump from 4.6.2. No code changes required — zero-globals / zero-alloc design stayed compatible through cc3→cc5 rename and the 5.0.1 alloc/vec/map overflow-guard hardening (library doesn't touch those paths).
+- `cyrius.toml` cyrius pin raised to 5.5.0; `.cyrius-toolchain` 4.0.0 → 5.5.0.
+- 74/74 tests pass, 13 benchmarks still sub-microsecond (e.g. `fx_mul` min 489ns, `seg_intersect_miss` min 489ns, `point_on_side` min 488ns), 3 fuzz harnesses survive 25K iterations (intersect 10K + aabb 10K + blockmap 5K).
+
 ## [1.0.1] - 2026-04-14
 
 ### Changed
