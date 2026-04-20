@@ -39,12 +39,14 @@ jobs:
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
-      - name: Build
+      - name: Build (release — dead code NOPed via CYRIUS_DCE)
+        env:
+          CYRIUS_DCE: "1"
         run: |
           cyrius deps
           mkdir -p build
           cyrius build src/lib.cyr build/bsp
-          echo "bsp: $(wc -c < build/bsp) bytes"
+          echo "bsp: $(wc -c < build/bsp) bytes (CYRIUS_DCE=1)"
 
       - name: Test
         run: |

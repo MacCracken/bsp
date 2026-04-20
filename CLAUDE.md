@@ -100,7 +100,11 @@ src/
 # Build
 cyrius build src/lib.cyr build/bsp
 
-# Test (74 assertions)
+# Release build: NOPs dead functions in-place — same file size, but
+# unreachable code becomes inert. Used by release.yml.
+CYRIUS_DCE=1 cyrius build src/lib.cyr build/bsp
+
+# Test (74 assertions; 79 with 1.1.0+ signed-shift regression group)
 cyrius test
 
 # Benchmark (13 ops, all sub-microsecond)
