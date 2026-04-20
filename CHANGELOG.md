@@ -5,6 +5,23 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-04-20
+
+### Changed
+
+- **Cyrius 5.5.2** — toolchain bump from 5.5.0. Pure pin move, no source
+  changes. Picks up the 5.5.2 enum-constant sc_num fold: every `enum`
+  variant read now emits `mov rax, imm32` (5 bytes) instead of the old
+  `mov rcx, gvaddr; mov rax, [rcx]` indirect load (~10 bytes). bsp is
+  enum-dense (`BspFixed`, `BspNode`, `BBox`, `BlockmapConst`,
+  `FrustumField`) so the win compounds.
+- **Binary shrink (standalone bsp)**: 77,944 → 76,496 B (**−1,448 B,
+  −1.86 %**) on 5.5.2. All 13 benches still sub-μs (variance-level
+  noise), 79/79 tests pass, 25K fuzz iters clean.
+- **`dist/bsp.cyr` header** bumped to `Version: 1.1.2`. Bundle content
+  otherwise identical — the bump is a pure pin change and consumers
+  re-fetch the same 849-line concatenation.
+
 ## [1.1.1] - 2026-04-20
 
 ### Added

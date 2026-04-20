@@ -1,7 +1,7 @@
 # dist/bsp.cyr — bundled BSP library (single-file distribution)
 # Generated from [lib] modules in cyrius.cyml — do not edit directly.
 # Source: https://github.com/MacCracken/bsp
-# Version: 1.1.1
+# Version: 1.1.2
 # License: GPL-3.0-only
 #
 # Concatenation order matches Cyrius single-pass forward-reference
