@@ -108,7 +108,7 @@ fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
     var sdy = sy2 - sy1;
 
     var denom = asr(dx, 8) * asr(sdy, 8) - asr(dy, 8) * asr(sdx, 8);
-    if (denom == 0) { return 0 - 1; }
+    if (denom == 0) { return -1; }
 
     var abx = sx1 - ox;
     var aby = sy1 - oy;
@@ -118,13 +118,13 @@ fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
 
     # Check signs without division
     if (denom > 0) {
-        if (t_ray_num < 0) { return 0 - 1; }
-        if (t_seg_num < 0) { return 0 - 1; }
-        if (t_seg_num > denom) { return 0 - 1; }
+        if (t_ray_num < 0) { return -1; }
+        if (t_seg_num < 0) { return -1; }
+        if (t_seg_num > denom) { return -1; }
     } else {
-        if (t_ray_num > 0) { return 0 - 1; }
-        if (t_seg_num > 0) { return 0 - 1; }
-        if (t_seg_num < denom) { return 0 - 1; }
+        if (t_ray_num > 0) { return -1; }
+        if (t_seg_num > 0) { return -1; }
+        if (t_seg_num < denom) { return -1; }
     }
 
     # Safe to divide now (denom != 0, signs checked)
@@ -144,17 +144,22 @@ fn bsp_point_seg_dist(px, py, sx1, sy1, sx2, sy2) {
     var pdx = px - sx1;
     var pdy = py - sy1;
 
-    var len_sq = fx_mul(sdx >> 8, sdx >> 8) + fx_mul(sdy >> 8, sdy >> 8);
+    var sdx_s = asr(sdx, 8);
+    var sdy_s = asr(sdy, 8);
+    var len_sq = fx_mul(sdx_s, sdx_s) + fx_mul(sdy_s, sdy_s);
     if (len_sq <= 0) {
-        # Degenerate segment: distance to endpoint
-        var adx = fx_abs(pdx);
-        var ady = fx_abs(pdy);
-        if (adx > ady) { return adx + (ady >> 1); }
-        return ady + (adx >> 1);
+        # Degenerate (zero-length) OR sub-precision segment (>>8 collapsed
+        # len_sq to 0). Pick the nearer of the two endpoints; distance to
+        # only sx1/sy1 would break symmetry for points past sx2/sy2.
+        var d1 = _approx_dist(pdx, pdy);
+        var d2 = _approx_dist(px - sx2, py - sy2);
+        if (d1 < d2) { return d1; }
+        return d2;
     }
 
     # Project point onto line: t = dot(p-s1, s2-s1) / |s2-s1|^2
-    var dot = fx_mul(pdx >> 8, sdx >> 8) + fx_mul(pdy >> 8, sdy >> 8);
+    # pdx/pdy are signed; must use asr() to preserve sign through the shift.
+    var dot = fx_mul(asr(pdx, 8), sdx_s) + fx_mul(asr(pdy, 8), sdy_s);
     var t = fx_div(dot, len_sq);
     t = fx_clamp(t, 0, FX_ONE);
 
@@ -163,8 +168,14 @@ fn bsp_point_seg_dist(px, py, sx1, sy1, sx2, sy2) {
     var cy = sy1 + fx_mul(t, sdy);
 
     # Approximate distance (DOOM's P_AproxDistance)
-    var adx = fx_abs(px - cx);
-    var ady = fx_abs(py - cy);
-    if (adx > ady) { return adx + (ady >> 1); }
-    return ady + (adx >> 1);
+    return _approx_dist(px - cx, py - cy);
+}
+
+# DOOM P_AproxDistance: max(|dx|,|dy|) + min(|dx|,|dy|)/2.
+# Factored out so the degenerate path stays symmetric with the main path.
+fn _approx_dist(dx, dy) {
+    var adx = fx_abs(dx);
+    var ady = fx_abs(dy);
+    if (adx > ady) { return adx + asr(ady, 1); }
+    return ady + asr(adx, 1);
 }

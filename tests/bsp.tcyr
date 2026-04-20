@@ -195,6 +195,28 @@ fn main() {
     assert_eq(fx_to_int(dist3), 0, "point at endpoint = 0");
 
     # ============================================================
+    test_group("negative-coord / signed-shift correctness (1.1.0)");
+    # ============================================================
+
+    # aabb_center across origin — exercises `>> 1` on a possibly-negative
+    # sum. Pre-1.1.0 used bare `>>` which gave INT64_MAX for negatives.
+    var nbox[4];
+    aabb_set(&nbox, 3, -5, -5, 3);
+    assert_eq(aabb_center_x(&nbox), -1, "center_x(-5,3) = -1 (not INT64_MAX)");
+    assert_eq(aabb_center_y(&nbox), -1, "center_y(-5,3) = -1 (not INT64_MAX)");
+
+    aabb_set(&nbox, 10, -10, -20, 20);
+    assert_eq(aabb_center_x(&nbox), 0, "center_x(-20,20) = 0");
+    assert_eq(aabb_center_y(&nbox), 0, "center_y(-10,10) = 0");
+
+    # point_seg_dist symmetry: equidistant points either side of a seg
+    # must return the same distance. Pre-1.1.0 degenerate path returned
+    # |p - sx1| regardless of which side, breaking symmetry.
+    var d_left = bsp_point_seg_dist(-257, 0, 0, 0, 257, 0);
+    var d_right = bsp_point_seg_dist(514, 0, 0, 0, 257, 0);
+    assert_eq(d_left, d_right, "point_seg_dist symmetric on sub-precision seg");
+
+    # ============================================================
     test_group("BSP tree accessors");
     # ============================================================
 

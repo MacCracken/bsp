@@ -5,13 +5,62 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.2] - 2026-04-20
+## [1.1.0] - 2026-04-20
+
+### Fixed (signed-shift correctness audit)
+
+DOOM escaped these because its coords are integer-fx (`x << 16`), which
+makes the low bits align to cancel under Cyrius's logical `>>`. Any
+consumer with sub-pixel fx, scene-graph deltas, or AABBs that span the
+origin would hit them immediately. Per bsp's own CLAUDE.md rule
+("Do not use bare `>>` on signed values — use `asr()`"), all violating
+sites fixed. Reproduction probes demonstrated the bugs on real inputs
+before fixing.
+
+- **`aabb_center_x` / `aabb_center_y`** — bare `>> 1` on a possibly-negative
+  sum. `aabb_center_x(left=-5, right=3)` returned `9223372036854775807`
+  (INT64_MAX) instead of `-1`. Now uses `asr(...,1)`.
+- **`bsp_point_seg_dist`** — bare `>> 8` on signed `pdx`/`pdy` garbled the
+  projected-point dot product for any input quadrant whose `>>8`-scaled
+  delta wasn't divisible by 256 (i.e. almost anything outside DOOM's
+  integer-fx vertex grid). Now uses `asr(..., 8)`.
+- **`bsp_point_seg_dist` degenerate/sub-precision path** — when `>>8`
+  scaling collapsed `len_sq` to zero, the function returned
+  `|p - sx1|` regardless of which endpoint was actually closer,
+  breaking symmetry. Extracted `_approx_dist(dx, dy)` helper and the
+  degenerate path now picks the nearer of `sx1`/`sx2`.
+- **`frustum_test_point` / `frustum_test_aabb`** — bare `>> 4` on signed
+  deltas AND on signed plane normals. Any frustum with a viewer not at
+  the origin, or with inward-pointing normals that went negative, could
+  reject or accept the wrong side. Refactored to pre-scale signed
+  operands once via `asr(...,4)` (also dedups the `(left-vx)>>4`,
+  `(top-vy)>>4` etc. repeated sub-expressions across the 8 corner
+  tests).
 
 ### Changed
 
-- **Cyrius 5.5.0** — toolchain bump from 4.6.2. No code changes required — zero-globals / zero-alloc design stayed compatible through cc3→cc5 rename and the 5.0.1 alloc/vec/map overflow-guard hardening (library doesn't touch those paths).
-- `cyrius.toml` cyrius pin raised to 5.5.0; `.cyrius-toolchain` 4.0.0 → 5.5.0.
-- 74/74 tests pass, 13 benchmarks still sub-microsecond (e.g. `fx_mul` min 489ns, `seg_intersect_miss` min 489ns, `point_on_side` min 488ns), 3 fuzz harnesses survive 25K iterations (intersect 10K + aabb 10K + blockmap 5K).
+- **Cyrius 5.5.0** — toolchain bump from 4.6.2. cc3 → cc5 rename;
+  `cyrius.toml` pin raised to 5.5.0; `.cyrius-toolchain` 4.0.0 → 5.5.0.
+- **Negative literals modernized** — `0 - 2147483648` → `-2147483648`
+  (`aabb_init`), `return 0 - 1` → `return -1` (ray_cast, nearest_seg,
+  point_in_subsector initial "no-seg-yet" sentinel).
+
+### Added
+
+- 5 new assertions in `tests/bsp.tcyr` under the "negative-coord /
+  signed-shift correctness (1.1.0)" group guarding the three regression
+  cases above.
+- Internal `_approx_dist(dx, dy)` helper (not public API).
+
+### Quality gates (on 5.5.0)
+
+- **Tests**: 79/79 pass (was 74; +5 regressions).
+- **Benches**: 13/13 still sub-microsecond. `point_seg_dist` min 489ns,
+  `point_on_side` min 838ns, `fx_mul` min 489ns. No regression attributable
+  to the asr() changes; variance within run-to-run noise.
+- **Fuzz**: `fuzz_intersect` 10K + `fuzz_aabb` 10K + `fuzz_blockmap` 5K —
+  all pass clean with the fixes in.
+- **Lint**: 0 warnings across all 9 src modules.
 
 ## [1.0.1] - 2026-04-14
 

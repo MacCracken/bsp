@@ -18,10 +18,10 @@ enum BBox {
 
 # Initialize an AABB to "empty" (inverted extremes)
 fn aabb_init(box) {
-    store64(box + AABB_TOP, 0 - 2147483648);
+    store64(box + AABB_TOP, -2147483648);
     store64(box + AABB_BOTTOM, 2147483647);
     store64(box + AABB_LEFT, 2147483647);
-    store64(box + AABB_RIGHT, 0 - 2147483648);
+    store64(box + AABB_RIGHT, -2147483648);
     return 0;
 }
 
@@ -90,10 +90,10 @@ fn aabb_height(box) {
 
 # Compute center X
 fn aabb_center_x(box) {
-    return (load64(box + AABB_LEFT) + load64(box + AABB_RIGHT)) >> 1;
+    return asr(load64(box + AABB_LEFT) + load64(box + AABB_RIGHT), 1);
 }
 
 # Compute center Y
 fn aabb_center_y(box) {
-    return (load64(box + AABB_BOTTOM) + load64(box + AABB_TOP)) >> 1;
+    return asr(load64(box + AABB_BOTTOM) + load64(box + AABB_TOP), 1);
 }

@@ -17,7 +17,7 @@
 fn bsp_point_in_subsector(px, py, segs, seg_count) {
     if (seg_count == 0) { return 0; }
 
-    var first_side = 0 - 1;
+    var first_side = -1;
 
     for (var i = 0; i < seg_count; i += 1) {
         var base = segs + i * 32;
@@ -47,7 +47,7 @@ fn bsp_point_in_subsector(px, py, segs, seg_count) {
 # Returns segment index, or -1 if no segments.
 
 fn bsp_nearest_seg(px, py, segs, seg_count) {
-    if (seg_count == 0) { return 0 - 1; }
+    if (seg_count == 0) { return -1; }
 
     var best_idx = 0;
     var best_dist = 2147483647;

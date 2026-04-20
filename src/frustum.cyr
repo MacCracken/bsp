@@ -45,20 +45,22 @@ fn frustum_build(fr, vx, vy, left_cos, left_sin, right_cos, right_sin) {
 
 # Test if point (px, py) is inside the frustum.
 # Returns 1 if inside, 0 if outside.
+# All operands are signed (dx/dy are diffs, normals can be negative);
+# shifts use asr() to preserve sign (Cyrius `>>` is logical).
 fn frustum_test_point(fr, px, py) {
     var vx = load64(fr + FR_VIEW_X);
     var vy = load64(fr + FR_VIEW_Y);
-    var dx = px - vx;
-    var dy = py - vy;
+    var dx = asr(px - vx, 4);
+    var dy = asr(py - vy, 4);
 
     # Test against left plane
-    var left_dot = fx_mul(dx >> 4, load64(fr + FR_LEFT_NX) >> 4)
-                 + fx_mul(dy >> 4, load64(fr + FR_LEFT_NY) >> 4);
+    var left_dot = fx_mul(dx, asr(load64(fr + FR_LEFT_NX), 4))
+                 + fx_mul(dy, asr(load64(fr + FR_LEFT_NY), 4));
     if (left_dot < 0) { return 0; }
 
     # Test against right plane
-    var right_dot = fx_mul(dx >> 4, load64(fr + FR_RIGHT_NX) >> 4)
-                  + fx_mul(dy >> 4, load64(fr + FR_RIGHT_NY) >> 4);
+    var right_dot = fx_mul(dx, asr(load64(fr + FR_RIGHT_NX), 4))
+                  + fx_mul(dy, asr(load64(fr + FR_RIGHT_NY), 4));
     if (right_dot < 0) { return 0; }
 
     return 1;
@@ -72,30 +74,31 @@ fn frustum_test_aabb(fr, box) {
     var vx = load64(fr + FR_VIEW_X);
     var vy = load64(fr + FR_VIEW_Y);
 
-    var top = load64(box + AABB_TOP);
-    var bot = load64(box + AABB_BOTTOM);
-    var left = load64(box + AABB_LEFT);
-    var right = load64(box + AABB_RIGHT);
+    # Pre-scale corner offsets once (signed — use asr).
+    var lx = asr(load64(box + AABB_LEFT) - vx, 4);
+    var rx = asr(load64(box + AABB_RIGHT) - vx, 4);
+    var ty = asr(load64(box + AABB_TOP) - vy, 4);
+    var by = asr(load64(box + AABB_BOTTOM) - vy, 4);
 
-    var lnx = load64(fr + FR_LEFT_NX);
-    var lny = load64(fr + FR_LEFT_NY);
-    var rnx = load64(fr + FR_RIGHT_NX);
-    var rny = load64(fr + FR_RIGHT_NY);
+    var lnx = asr(load64(fr + FR_LEFT_NX), 4);
+    var lny = asr(load64(fr + FR_LEFT_NY), 4);
+    var rnx = asr(load64(fr + FR_RIGHT_NX), 4);
+    var rny = asr(load64(fr + FR_RIGHT_NY), 4);
 
     # Test left plane: if all 4 corners have negative dot product, reject
     var l_fail = 0;
-    if (fx_mul((left - vx) >> 4, lnx >> 4) + fx_mul((top - vy) >> 4, lny >> 4) < 0) { l_fail += 1; }
-    if (fx_mul((right - vx) >> 4, lnx >> 4) + fx_mul((top - vy) >> 4, lny >> 4) < 0) { l_fail += 1; }
-    if (fx_mul((left - vx) >> 4, lnx >> 4) + fx_mul((bot - vy) >> 4, lny >> 4) < 0) { l_fail += 1; }
-    if (fx_mul((right - vx) >> 4, lnx >> 4) + fx_mul((bot - vy) >> 4, lny >> 4) < 0) { l_fail += 1; }
+    if (fx_mul(lx, lnx) + fx_mul(ty, lny) < 0) { l_fail += 1; }
+    if (fx_mul(rx, lnx) + fx_mul(ty, lny) < 0) { l_fail += 1; }
+    if (fx_mul(lx, lnx) + fx_mul(by, lny) < 0) { l_fail += 1; }
+    if (fx_mul(rx, lnx) + fx_mul(by, lny) < 0) { l_fail += 1; }
     if (l_fail == 4) { return 0; }
 
     # Test right plane
     var r_fail = 0;
-    if (fx_mul((left - vx) >> 4, rnx >> 4) + fx_mul((top - vy) >> 4, rny >> 4) < 0) { r_fail += 1; }
-    if (fx_mul((right - vx) >> 4, rnx >> 4) + fx_mul((top - vy) >> 4, rny >> 4) < 0) { r_fail += 1; }
-    if (fx_mul((left - vx) >> 4, rnx >> 4) + fx_mul((bot - vy) >> 4, rny >> 4) < 0) { r_fail += 1; }
-    if (fx_mul((right - vx) >> 4, rnx >> 4) + fx_mul((bot - vy) >> 4, rny >> 4) < 0) { r_fail += 1; }
+    if (fx_mul(lx, rnx) + fx_mul(ty, rny) < 0) { r_fail += 1; }
+    if (fx_mul(rx, rnx) + fx_mul(ty, rny) < 0) { r_fail += 1; }
+    if (fx_mul(lx, rnx) + fx_mul(by, rny) < 0) { r_fail += 1; }
+    if (fx_mul(rx, rnx) + fx_mul(by, rny) < 0) { r_fail += 1; }
     if (r_fail == 4) { return 0; }
 
     return 1;
