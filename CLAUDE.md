@@ -9,7 +9,7 @@
 - **Language**: Cyrius (native, compiled via cc5 5.5.0)
 - **Version**: SemVer, version file at `VERSION`
 - **Binary contribution**: ~2KB compiled (837 lines across 9 modules)
-- **Status**: v1.1.0 — STABLE on Cyrius 5.5.0. 79 tests passing (+5 signed-shift regressions), 13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations). Production-ready, API stable, used by cyrius-doom. Correctness audit: replaced all bare `>>` on signed values with `asr()`; fixed `aabb_center_*` wrapping INT64_MAX for negatives and `bsp_point_seg_dist` symmetry on sub-precision segments.
+- **Status**: v1.1.1 — STABLE on Cyrius 5.5.0. 79 tests passing, 13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations). 1.1.1 adds `[lib]` manifest section and `dist/bsp.cyr` single-file bundle — first downstream consumer is cyrius-doom 0.26.0 (swaps its ad-hoc BSP traversal for bsp library primitives). 1.1.0 landed the signed-shift correctness audit (`asr()` for all signed shifts; fixed `aabb_center_*` INT64_MAX wrap and `bsp_point_seg_dist` symmetry on sub-precision segments).
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)

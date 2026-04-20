@@ -1,0 +1,849 @@
+# dist/bsp.cyr — bundled BSP library (single-file distribution)
+# Generated from [lib] modules in cyrius.cyml — do not edit directly.
+# Source: https://github.com/MacCracken/bsp
+# Version: 1.1.1
+# License: GPL-3.0-only
+#
+# Concatenation order matches Cyrius single-pass forward-reference
+# resolution: fixed → aabb → intersect → tree → traverse → query →
+# blockmap → frustum. Consumers (cyrius-doom) include this file
+# after their stdlib headers and before any code that calls bsp_*.
+
+# ──── bsp/src/fixed.cyr ────────────────────────────────────────
+# fixed.cyr -- minimal 16.16 fixed-point math for BSP
+# No dependencies. No globals. Pure functions only.
+#
+# IMPORTANT: Cyrius >> is LOGICAL right shift (zero-fill).
+# Use asr() for all signed right shifts.
+
+enum BspFixed {
+    FX_ONE = 65536;
+    FX_HALF = 32768;
+    FX_MAX = 2147483647;
+    FX_SHIFT = 16;
+}
+
+fn asr(val, bits) {
+    if (val >= 0) { return val >> bits; }
+    var pos = -val;
+    return -(pos >> bits);
+}
+
+fn fx_from_int(n) { return n << 16; }
+fn fx_to_int(f) { return asr(f, 16); }
+fn fx_mul(a, b) { return asr(a * b, 16); }
+
+fn fx_div(a, b) {
+    if (b == 0) { return FX_MAX; }
+    var aa = a;
+    var bb = b;
+    if (aa > 32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
+    if (aa < -32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
+    return (aa << 16) / bb;
+}
+
+fn fx_abs(f) { if (f < 0) { return -f; } return f; }
+fn fx_min(a, b) { if (a < b) { return a; } return b; }
+fn fx_max(a, b) { if (a > b) { return a; } return b; }
+fn fx_clamp(f, lo, hi) { if (f < lo) { return lo; } if (f > hi) { return hi; } return f; }
+
+# ──── bsp/src/aabb.cyr ────────────────────────────────────────
+# aabb.cyr -- axis-aligned bounding boxes
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# An AABB is stored as 4 values: top, bottom, left, right (all fixed-point).
+# Passed via pointer to a 32-byte block:
+#   [0]  top    (max Y)
+#   [8]  bottom (min Y)
+#   [16] left   (min X)
+#   [24] right  (max X)
+
+enum BBox {
+    AABB_TOP = 0;
+    AABB_BOTTOM = 8;
+    AABB_LEFT = 16;
+    AABB_RIGHT = 24;
+    AABB_SIZE = 32;
+}
+
+# Initialize an AABB to "empty" (inverted extremes)
+fn aabb_init(box) {
+    store64(box + AABB_TOP, -2147483648);
+    store64(box + AABB_BOTTOM, 2147483647);
+    store64(box + AABB_LEFT, 2147483647);
+    store64(box + AABB_RIGHT, -2147483648);
+    return 0;
+}
+
+# Set AABB from explicit values
+fn aabb_set(box, top, bottom, left, right) {
+    store64(box + AABB_TOP, top);
+    store64(box + AABB_BOTTOM, bottom);
+    store64(box + AABB_LEFT, left);
+    store64(box + AABB_RIGHT, right);
+    return 0;
+}
+
+# Expand AABB to include point (px, py)
+fn aabb_add_point(box, px, py) {
+    if (py > load64(box + AABB_TOP)) { store64(box + AABB_TOP, py); }
+    if (py < load64(box + AABB_BOTTOM)) { store64(box + AABB_BOTTOM, py); }
+    if (px < load64(box + AABB_LEFT)) { store64(box + AABB_LEFT, px); }
+    if (px > load64(box + AABB_RIGHT)) { store64(box + AABB_RIGHT, px); }
+    return 0;
+}
+
+# Test if point (px, py) is inside AABB
+fn aabb_contains_point(box, px, py) {
+    if (px < load64(box + AABB_LEFT)) { return 0; }
+    if (px > load64(box + AABB_RIGHT)) { return 0; }
+    if (py < load64(box + AABB_BOTTOM)) { return 0; }
+    if (py > load64(box + AABB_TOP)) { return 0; }
+    return 1;
+}
+
+# Test if two AABBs overlap
+fn aabb_intersects(a, b) {
+    if (load64(a + AABB_LEFT) > load64(b + AABB_RIGHT)) { return 0; }
+    if (load64(a + AABB_RIGHT) < load64(b + AABB_LEFT)) { return 0; }
+    if (load64(a + AABB_BOTTOM) > load64(b + AABB_TOP)) { return 0; }
+    if (load64(a + AABB_TOP) < load64(b + AABB_BOTTOM)) { return 0; }
+    return 1;
+}
+
+# Merge AABB b into AABB a (a = union of a and b)
+fn aabb_merge(a, b) {
+    var bt = load64(b + AABB_TOP);
+    var bb = load64(b + AABB_BOTTOM);
+    var bl = load64(b + AABB_LEFT);
+    var br = load64(b + AABB_RIGHT);
+    if (bt > load64(a + AABB_TOP)) { store64(a + AABB_TOP, bt); }
+    if (bb < load64(a + AABB_BOTTOM)) { store64(a + AABB_BOTTOM, bb); }
+    if (bl < load64(a + AABB_LEFT)) { store64(a + AABB_LEFT, bl); }
+    if (br > load64(a + AABB_RIGHT)) { store64(a + AABB_RIGHT, br); }
+    return 0;
+}
+
+# Compute width of AABB
+fn aabb_width(box) {
+    var w = load64(box + AABB_RIGHT) - load64(box + AABB_LEFT);
+    if (w < 0) { return 0; }
+    return w;
+}
+
+# Compute height of AABB
+fn aabb_height(box) {
+    var h = load64(box + AABB_TOP) - load64(box + AABB_BOTTOM);
+    if (h < 0) { return 0; }
+    return h;
+}
+
+# Compute center X
+fn aabb_center_x(box) {
+    return asr(load64(box + AABB_LEFT) + load64(box + AABB_RIGHT), 1);
+}
+
+# Compute center Y
+fn aabb_center_y(box) {
+    return asr(load64(box + AABB_BOTTOM) + load64(box + AABB_TOP), 1);
+}
+
+# ──── bsp/src/intersect.cyr ────────────────────────────────────────
+# intersect.cyr -- line/segment/ray intersection tests
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# Coordinates are passed as individual x,y values (not structs)
+# to keep the API simple and avoid heap allocation.
+
+# ================================================================
+# Point-on-side of a line
+# ================================================================
+# Given a line from (lx, ly) in direction (ldx, ldy),
+# determine which side point (px, py) is on.
+# Returns: 0 = right/front, 1 = left/back
+#
+# Uses cross product: (px-lx)*ldy - (py-ly)*ldx
+# Positive = right, negative = left
+
+fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
+    var dx = px - lx;
+    var dy = py - ly;
+    # Shift down to avoid overflow in multiplication
+    var left = (asr(dx, 8) * asr(ldy, 8)) ;
+    var right = (asr(dy, 8) * asr(ldx, 8)) ;
+    if (left >= right) { return 0; }
+    return 1;
+}
+
+# ================================================================
+# Segment-segment intersection
+# ================================================================
+# Test if segment (ax1,ay1)-(ax2,ay2) intersects (bx1,by1)-(bx2,by2).
+# Returns 1 if they intersect, 0 if not.
+#
+# Uses parametric form: find t1, t2 where
+#   A1 + t1*(A2-A1) = B1 + t2*(B2-B1)
+# Intersection if 0 <= t1 <= 1 and 0 <= t2 <= 1.
+
+fn _seg_check(denom, t1_num, t2_num) {
+    if (denom > 0) {
+        if (t1_num < 0) { return 0; }
+        if (t1_num > denom) { return 0; }
+        if (t2_num < 0) { return 0; }
+        if (t2_num > denom) { return 0; }
+    }
+    if (denom < 0) {
+        if (t1_num > 0) { return 0; }
+        if (t1_num < denom) { return 0; }
+        if (t2_num > 0) { return 0; }
+        if (t2_num < denom) { return 0; }
+    }
+    return 1;
+}
+
+fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
+    var dax = ax2 - ax1;
+    var day = ay2 - ay1;
+    var dbx = bx2 - bx1;
+    var dby = by2 - by1;
+    var denom = asr(dax, 8) * asr(dby, 8) - asr(day, 8) * asr(dbx, 8);
+    if (denom == 0) { return 0; }
+    var abx = bx1 - ax1;
+    var aby = by1 - ay1;
+    var t1_num = asr(abx, 8) * asr(dby, 8) - asr(aby, 8) * asr(dbx, 8);
+    var t2_num = asr(abx, 8) * asr(day, 8) - asr(aby, 8) * asr(dax, 8);
+    return _seg_check(denom, t1_num, t2_num);
+}
+
+# ================================================================
+# Line-of-sight test
+# ================================================================
+# Can point (sx,sy) see point (tx,ty) without being blocked
+# by any one-sided wall segment?
+#
+# walls = pointer to array of segments, each 32 bytes:
+#   [0] x1, [8] y1, [16] x2, [24] y2 (all fixed-point)
+# wall_count = number of segments
+# twosided_flags = pointer to array of i64 (1=two-sided, 0=one-sided)
+#
+# Returns 1 if visible, 0 if blocked.
+
+fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
+    for (var i = 0; i < wall_count; i += 1) {
+        # Skip two-sided walls (they don't block sight)
+        if (load64(twosided_flags + i * 8) != 0) { continue; }
+
+        var base = walls + i * 32;
+        var wx1 = load64(base);
+        var wy1 = load64(base + 8);
+        var wx2 = load64(base + 16);
+        var wy2 = load64(base + 24);
+
+        if (bsp_seg_intersect(sx, sy, tx, ty, wx1, wy1, wx2, wy2) == 1) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+# ================================================================
+# Ray cast
+# ================================================================
+# Cast a ray from (ox, oy) in direction (dx, dy) against a segment
+# (sx1,sy1)-(sx2,sy2). Returns the parametric t along the ray
+# where intersection occurs (0..FX_MAX), or -1 if no hit.
+# The actual intersection point = (ox + t*dx, oy + t*dy).
+
+fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
+    var sdx = sx2 - sx1;
+    var sdy = sy2 - sy1;
+
+    var denom = asr(dx, 8) * asr(sdy, 8) - asr(dy, 8) * asr(sdx, 8);
+    if (denom == 0) { return -1; }
+
+    var abx = sx1 - ox;
+    var aby = sy1 - oy;
+
+    var t_ray_num = asr(abx, 8) * asr(sdy, 8) - asr(aby, 8) * asr(sdx, 8);
+    var t_seg_num = asr(abx, 8) * asr(dy, 8) - asr(aby, 8) * asr(dx, 8);
+
+    # Check signs without division
+    if (denom > 0) {
+        if (t_ray_num < 0) { return -1; }
+        if (t_seg_num < 0) { return -1; }
+        if (t_seg_num > denom) { return -1; }
+    } else {
+        if (t_ray_num > 0) { return -1; }
+        if (t_seg_num > 0) { return -1; }
+        if (t_seg_num < denom) { return -1; }
+    }
+
+    # Safe to divide now (denom != 0, signs checked)
+    return fx_div(t_ray_num, denom);
+}
+
+# ================================================================
+# Point-to-segment distance (approximate)
+# ================================================================
+# Returns the approximate distance from point (px,py) to the
+# nearest point on segment (sx1,sy1)-(sx2,sy2).
+# Uses projection + DOOM-style approximate distance.
+
+fn bsp_point_seg_dist(px, py, sx1, sy1, sx2, sy2) {
+    var sdx = sx2 - sx1;
+    var sdy = sy2 - sy1;
+    var pdx = px - sx1;
+    var pdy = py - sy1;
+
+    var sdx_s = asr(sdx, 8);
+    var sdy_s = asr(sdy, 8);
+    var len_sq = fx_mul(sdx_s, sdx_s) + fx_mul(sdy_s, sdy_s);
+    if (len_sq <= 0) {
+        # Degenerate (zero-length) OR sub-precision segment (>>8 collapsed
+        # len_sq to 0). Pick the nearer of the two endpoints; distance to
+        # only sx1/sy1 would break symmetry for points past sx2/sy2.
+        var d1 = _approx_dist(pdx, pdy);
+        var d2 = _approx_dist(px - sx2, py - sy2);
+        if (d1 < d2) { return d1; }
+        return d2;
+    }
+
+    # Project point onto line: t = dot(p-s1, s2-s1) / |s2-s1|^2
+    # pdx/pdy are signed; must use asr() to preserve sign through the shift.
+    var dot = fx_mul(asr(pdx, 8), sdx_s) + fx_mul(asr(pdy, 8), sdy_s);
+    var t = fx_div(dot, len_sq);
+    t = fx_clamp(t, 0, FX_ONE);
+
+    # Closest point on segment
+    var cx = sx1 + fx_mul(t, sdx);
+    var cy = sy1 + fx_mul(t, sdy);
+
+    # Approximate distance (DOOM's P_AproxDistance)
+    return _approx_dist(px - cx, py - cy);
+}
+
+# DOOM P_AproxDistance: max(|dx|,|dy|) + min(|dx|,|dy|)/2.
+# Factored out so the degenerate path stays symmetric with the main path.
+fn _approx_dist(dx, dy) {
+    var adx = fx_abs(dx);
+    var ady = fx_abs(dy);
+    if (adx > ady) { return adx + asr(ady, 1); }
+    return ady + asr(adx, 1);
+}
+
+# ──── bsp/src/tree.cyr ────────────────────────────────────────
+# tree.cyr -- BSP tree construction
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# A BSP tree partitions 2D space using splitting lines.
+# Each node stores a partition line and two children.
+# Leaves (subsectors) contain the actual geometry.
+#
+# Tree is stored in caller-provided arrays:
+#
+# Nodes array: each node = 112 bytes
+#   [0]   x      -- partition line origin X (fixed)
+#   [8]   y      -- partition line origin Y (fixed)
+#   [16]  dx     -- partition line direction X (fixed)
+#   [24]  dy     -- partition line direction Y (fixed)
+#   [32]  bbox_r -- right child bounding box (32 bytes)
+#   [64]  bbox_l -- left child bounding box (32 bytes)
+#   [96]  child_r -- right child index (bit 15 = subsector flag)
+#   [104] child_l -- left child index (bit 15 = subsector flag)
+
+enum BspNode {
+    BSP_NODE_SIZE = 112;
+    BSP_NODE_X = 0;
+    BSP_NODE_Y = 8;
+    BSP_NODE_DX = 16;
+    BSP_NODE_DY = 24;
+    BSP_NODE_BBOX_R = 32;
+    BSP_NODE_BBOX_L = 64;
+    BSP_NODE_CHILD_R = 96;
+    BSP_NODE_CHILD_L = 104;
+    BSP_NF_SUBSECTOR = 0x8000;
+}
+
+# Check if a child index refers to a subsector (leaf)
+fn bsp_is_subsector(child) {
+    if ((child & BSP_NF_SUBSECTOR) != 0) { return 1; }
+    return 0;
+}
+
+# Extract subsector index from a child reference
+fn bsp_subsector_idx(child) {
+    return child & 0x7FFF;
+}
+
+# Get node partition line fields
+fn bsp_node_x(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_X); }
+fn bsp_node_y(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_Y); }
+fn bsp_node_dx(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_DX); }
+fn bsp_node_dy(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_DY); }
+fn bsp_node_child_r(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_CHILD_R); }
+fn bsp_node_child_l(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_CHILD_L); }
+
+# Get pointer to a node's child bounding box
+fn bsp_node_bbox_r(nodes, idx) { return nodes + idx * BSP_NODE_SIZE + BSP_NODE_BBOX_R; }
+fn bsp_node_bbox_l(nodes, idx) { return nodes + idx * BSP_NODE_SIZE + BSP_NODE_BBOX_L; }
+
+# Set a node's partition line
+fn bsp_node_set(nodes, idx, x, y, dx, dy) {
+    var base = nodes + idx * BSP_NODE_SIZE;
+    store64(base + BSP_NODE_X, x);
+    store64(base + BSP_NODE_Y, y);
+    store64(base + BSP_NODE_DX, dx);
+    store64(base + BSP_NODE_DY, dy);
+    return 0;
+}
+
+# Set a node's children
+fn bsp_node_set_children(nodes, idx, right, left) {
+    var base = nodes + idx * BSP_NODE_SIZE;
+    store64(base + BSP_NODE_CHILD_R, right);
+    store64(base + BSP_NODE_CHILD_L, left);
+    return 0;
+}
+
+# ──── bsp/src/traverse.cyr ────────────────────────────────────────
+# traverse.cyr -- BSP tree traversal
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# Two traversal orders:
+#   Front-to-back: for occlusion culling (renderer)
+#   Back-to-front: for painter's algorithm
+#
+# The traversal itself doesn't draw anything -- it calls
+# a visitor function pointer for each subsector reached.
+# The visitor decides what to do (render, query, etc).
+#
+# Since Cyrius doesn't have easy function pointer dispatch yet,
+# we provide the core decision functions and let the caller
+# write their own traversal loop.
+
+# ================================================================
+# Point-on-side of BSP partition line
+# ================================================================
+# Determine which side of node's partition line the point is on.
+# nodes = pointer to nodes array
+# node_idx = which node
+# px, py = point position (fixed-point)
+# Returns: 0 = right/front, 1 = left/back
+
+fn bsp_point_on_side(nodes, node_idx, px, py) {
+    var nx = bsp_node_x(nodes, node_idx);
+    var ny = bsp_node_y(nodes, node_idx);
+    var ndx = bsp_node_dx(nodes, node_idx);
+    var ndy = bsp_node_dy(nodes, node_idx);
+    return bsp_point_side(px, py, nx, ny, ndx, ndy);
+}
+
+# ================================================================
+# Point-to-subsector lookup
+# ================================================================
+# Walk the BSP tree to find which subsector (leaf) contains
+# the given point. Returns the subsector index.
+# nodes = pointer to nodes array
+# node_count = number of nodes (root = node_count - 1)
+# px, py = point position (fixed-point)
+
+fn bsp_find_subsector(nodes, node_count, px, py) {
+    if (node_count == 0) { return 0; }
+
+    var idx = node_count - 1;
+
+    while (bsp_is_subsector(idx) == 0) {
+        var side = bsp_point_on_side(nodes, idx, px, py);
+        if (side == 0) {
+            idx = bsp_node_child_r(nodes, idx);
+        } else {
+            idx = bsp_node_child_l(nodes, idx);
+        }
+    }
+
+    return bsp_subsector_idx(idx);
+}
+
+# ================================================================
+# AABB-in-view test (for traversal culling)
+# ================================================================
+# Test if a bounding box is potentially visible from a viewpoint.
+# Simple test: is the bbox on the same side as the viewpoint,
+# or does it straddle the partition line?
+# Returns 1 if potentially visible, 0 if fully behind.
+
+fn bsp_bbox_visible(bbox, vx, vy, vangle_cos, vangle_sin, fov_half) {
+    # For now: always visible (conservative)
+    # Full frustum culling requires the frustum.cyr module
+    # This is a placeholder for the culling optimization
+    var top = load64(bbox + AABB_TOP);
+    var bottom = load64(bbox + AABB_BOTTOM);
+    var left = load64(bbox + AABB_LEFT);
+    var right = load64(bbox + AABB_RIGHT);
+
+    # Quick reject: if all 4 corners are behind the viewer, skip
+    # (Simple check: is the bbox entirely behind vx,vy?)
+    # This is a rough approximation -- frustum.cyr does it properly
+    return 1;
+}
+
+# ──── bsp/src/query.cyr ────────────────────────────────────────
+# query.cyr -- spatial queries on BSP trees
+# No globals. Pure functions. All 16.16 fixed-point.
+
+# ================================================================
+# Point containment
+# ================================================================
+# Test if point (px, py) is inside the convex region defined
+# by a set of line segments (subsector boundary).
+#
+# segs = pointer to segment array, each 32 bytes:
+#   [0] x1, [8] y1, [16] x2, [24] y2
+# seg_count = number of segments
+#
+# A point is inside if it's on the same side of all segments
+# (assuming segments form a convex polygon wound consistently).
+
+fn bsp_point_in_subsector(px, py, segs, seg_count) {
+    if (seg_count == 0) { return 0; }
+
+    var first_side = -1;
+
+    for (var i = 0; i < seg_count; i += 1) {
+        var base = segs + i * 32;
+        var x1 = load64(base);
+        var y1 = load64(base + 8);
+        var x2 = load64(base + 16);
+        var y2 = load64(base + 24);
+
+        var side = bsp_point_side(px, py, x1, y1, x2 - x1, y2 - y1);
+
+        if (first_side < 0) {
+            first_side = side;
+        } else {
+            if (side != first_side) { return 0; }
+        }
+    }
+
+    return 1;
+}
+
+# ================================================================
+# Nearest segment to point
+# ================================================================
+# Find the index of the nearest segment to point (px, py).
+# segs = pointer to segment array (32 bytes each)
+# seg_count = number of segments
+# Returns segment index, or -1 if no segments.
+
+fn bsp_nearest_seg(px, py, segs, seg_count) {
+    if (seg_count == 0) { return -1; }
+
+    var best_idx = 0;
+    var best_dist = 2147483647;
+
+    for (var i = 0; i < seg_count; i += 1) {
+        var base = segs + i * 32;
+        var x1 = load64(base);
+        var y1 = load64(base + 8);
+        var x2 = load64(base + 16);
+        var y2 = load64(base + 24);
+
+        var dist = bsp_point_seg_dist(px, py, x1, y1, x2, y2);
+
+        if (dist < best_dist) {
+            best_dist = dist;
+            best_idx = i;
+        }
+    }
+
+    return best_idx;
+}
+
+# ================================================================
+# Count entities in AABB
+# ================================================================
+# Given an array of entity positions (16 bytes each: x, y),
+# count how many fall within the given bounding box.
+
+fn bsp_count_in_aabb(box, entities, entity_count) {
+    var count = 0;
+    for (var i = 0; i < entity_count; i += 1) {
+        var ex = load64(entities + i * 16);
+        var ey = load64(entities + i * 16 + 8);
+        if (aabb_contains_point(box, ex, ey) == 1) {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+# ──── bsp/src/blockmap.cyr ────────────────────────────────────────
+# blockmap.cyr -- grid-based spatial index
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# A blockmap divides 2D space into a regular grid of cells.
+# Each cell stores a list of segment indices that overlap it.
+# Used for fast collision detection (only test nearby segments).
+#
+# Blockmap layout (caller-provided buffer):
+#   [0]   origin_x   -- grid origin X (fixed-point)
+#   [8]   origin_y   -- grid origin Y (fixed-point)
+#   [16]  cell_size  -- cell width/height (fixed-point)
+#   [24]  cols       -- number of columns
+#   [32]  rows       -- number of rows
+#   [40]  data       -- start of cell data
+#
+# Cell data: each cell is a fixed-size block of segment indices.
+# Cell at (col, row) starts at: data + (row * cols + col) * cell_stride
+# First i64 in cell = count of segments in this cell
+# Remaining = segment indices
+
+enum BlockmapConst {
+    BM_ORIGIN_X = 0;
+    BM_ORIGIN_Y = 8;
+    BM_CELL_SIZE = 16;
+    BM_COLS = 24;
+    BM_ROWS = 32;
+    BM_DATA = 40;
+    BM_CELL_MAX_SEGS = 16;
+    BM_CELL_STRIDE = 136;
+}
+
+# Initialize a blockmap with given bounds and cell size.
+# buf = caller-provided buffer (must be large enough)
+# Returns: buf (for convenience)
+fn blockmap_init(buf, origin_x, origin_y, cell_size, cols, rows) {
+    store64(buf + BM_ORIGIN_X, origin_x);
+    store64(buf + BM_ORIGIN_Y, origin_y);
+    store64(buf + BM_CELL_SIZE, cell_size);
+    store64(buf + BM_COLS, cols);
+    store64(buf + BM_ROWS, rows);
+
+    # Zero all cell counts
+    var total_cells = cols * rows;
+    for (var i = 0; i < total_cells; i += 1) {
+        store64(buf + BM_DATA + i * BM_CELL_STRIDE, 0);
+    }
+    return buf;
+}
+
+# Convert world position to cell coordinates
+fn blockmap_cell_x(bm, wx) {
+    var ox = load64(bm + BM_ORIGIN_X);
+    var cs = load64(bm + BM_CELL_SIZE);
+    if (cs == 0) { return 0; }
+    return fx_to_int(fx_div(wx - ox, cs));
+}
+
+fn blockmap_cell_y(bm, wy) {
+    var oy = load64(bm + BM_ORIGIN_Y);
+    var cs = load64(bm + BM_CELL_SIZE);
+    if (cs == 0) { return 0; }
+    return fx_to_int(fx_div(wy - oy, cs));
+}
+
+# Add a segment index to the cell at (col, row)
+fn blockmap_add(bm, col, row, seg_idx) {
+    var cols = load64(bm + BM_COLS);
+    var rows = load64(bm + BM_ROWS);
+    if (col < 0) { return 0; }
+    if (row < 0) { return 0; }
+    if (col >= cols) { return 0; }
+    if (row >= rows) { return 0; }
+
+    var cell = bm + BM_DATA + (row * cols + col) * BM_CELL_STRIDE;
+    var count = load64(cell);
+    if (count >= BM_CELL_MAX_SEGS) { return 0; }
+
+    store64(cell + 8 + count * 8, seg_idx);
+    store64(cell, count + 1);
+    return 1;
+}
+
+# Insert a segment into all cells it overlaps.
+# Segment endpoints: (x1,y1)-(x2,y2) in fixed-point.
+fn blockmap_insert_seg(bm, seg_idx, x1, y1, x2, y2) {
+    var c1 = blockmap_cell_x(bm, fx_min(x1, x2));
+    var c2 = blockmap_cell_x(bm, fx_max(x1, x2));
+    var r1 = blockmap_cell_y(bm, fx_min(y1, y2));
+    var r2 = blockmap_cell_y(bm, fx_max(y1, y2));
+
+    var cols = load64(bm + BM_COLS);
+    var rows = load64(bm + BM_ROWS);
+    if (c1 < 0) { c1 = 0; }
+    if (r1 < 0) { r1 = 0; }
+    if (c2 >= cols) { c2 = cols - 1; }
+    if (r2 >= rows) { r2 = rows - 1; }
+
+    for (var r = r1; r <= r2; r += 1) {
+        for (var c = c1; c <= c2; c += 1) {
+            blockmap_add(bm, c, r, seg_idx);
+        }
+    }
+    return 0;
+}
+
+# Query: get pointer to cell data at (col, row).
+# Returns pointer to cell (first i64 = count, then indices), or 0.
+fn blockmap_get_cell(bm, col, row) {
+    var cols = load64(bm + BM_COLS);
+    var rows = load64(bm + BM_ROWS);
+    if (col < 0) { return 0; }
+    if (row < 0) { return 0; }
+    if (col >= cols) { return 0; }
+    if (row >= rows) { return 0; }
+    return bm + BM_DATA + (row * cols + col) * BM_CELL_STRIDE;
+}
+
+# Query: get count of segments in cell
+fn blockmap_cell_count(cell) {
+    if (cell == 0) { return 0; }
+    return load64(cell);
+}
+
+# Query: get segment index from cell
+fn blockmap_cell_seg(cell, idx) {
+    return load64(cell + 8 + idx * 8);
+}
+
+# Query: get all segment indices near point (px, py) within radius.
+# Results written to out_buf (array of i64 seg indices).
+# Returns number of results written.
+fn blockmap_query_point(bm, px, py, radius, out_buf, out_max) {
+    var c1 = blockmap_cell_x(bm, px - radius);
+    var c2 = blockmap_cell_x(bm, px + radius);
+    var r1 = blockmap_cell_y(bm, py - radius);
+    var r2 = blockmap_cell_y(bm, py + radius);
+
+    var cols = load64(bm + BM_COLS);
+    var rows = load64(bm + BM_ROWS);
+    if (c1 < 0) { c1 = 0; }
+    if (r1 < 0) { r1 = 0; }
+    if (c2 >= cols) { c2 = cols - 1; }
+    if (r2 >= rows) { r2 = rows - 1; }
+
+    var out_count = 0;
+    for (var r = r1; r <= r2; r += 1) {
+        for (var c = c1; c <= c2; c += 1) {
+            var cell = blockmap_get_cell(bm, c, r);
+            if (cell != 0) {
+                var n = blockmap_cell_count(cell);
+                for (var i = 0; i < n; i += 1) {
+                    if (out_count < out_max) {
+                        store64(out_buf + out_count * 8, blockmap_cell_seg(cell, i));
+                        out_count += 1;
+                    }
+                }
+            }
+        }
+    }
+    return out_count;
+}
+
+# ──── bsp/src/frustum.cyr ────────────────────────────────────────
+# frustum.cyr -- view frustum culling (2D)
+# No globals. Pure functions. All 16.16 fixed-point.
+#
+# A 2D view frustum is defined by the viewer position, direction,
+# and field of view. It forms a wedge/cone shape.
+#
+# For BSP rendering, we test if a bounding box is within the
+# view frustum before traversing into that subtree.
+#
+# Frustum stored as 2 half-planes (left edge, right edge):
+#   [0]   left_nx   -- left edge normal X (fixed)
+#   [8]   left_ny   -- left edge normal Y (fixed)
+#   [16]  right_nx  -- right edge normal X (fixed)
+#   [24]  right_ny  -- right edge normal Y (fixed)
+#   [32]  view_x    -- viewer position X (fixed)
+#   [40]  view_y    -- viewer position Y (fixed)
+
+enum FrustumField {
+    FR_LEFT_NX = 0;
+    FR_LEFT_NY = 8;
+    FR_RIGHT_NX = 16;
+    FR_RIGHT_NY = 24;
+    FR_VIEW_X = 32;
+    FR_VIEW_Y = 40;
+    FR_SIZE = 48;
+}
+
+# Build a frustum from viewer position, facing angle, and half-FOV.
+# Requires sin/cos functions from the caller's trig table.
+# left_angle = view_angle + fov_half
+# right_angle = view_angle - fov_half
+fn frustum_build(fr, vx, vy, left_cos, left_sin, right_cos, right_sin) {
+    # Left plane normal points inward (perpendicular to left edge, clockwise)
+    store64(fr + FR_LEFT_NX, left_sin);
+    store64(fr + FR_LEFT_NY, -left_cos);
+
+    # Right plane normal points inward
+    store64(fr + FR_RIGHT_NX, -right_sin);
+    store64(fr + FR_RIGHT_NY, right_cos);
+
+    store64(fr + FR_VIEW_X, vx);
+    store64(fr + FR_VIEW_Y, vy);
+    return 0;
+}
+
+# Test if point (px, py) is inside the frustum.
+# Returns 1 if inside, 0 if outside.
+# All operands are signed (dx/dy are diffs, normals can be negative);
+# shifts use asr() to preserve sign (Cyrius `>>` is logical).
+fn frustum_test_point(fr, px, py) {
+    var vx = load64(fr + FR_VIEW_X);
+    var vy = load64(fr + FR_VIEW_Y);
+    var dx = asr(px - vx, 4);
+    var dy = asr(py - vy, 4);
+
+    # Test against left plane
+    var left_dot = fx_mul(dx, asr(load64(fr + FR_LEFT_NX), 4))
+    + fx_mul(dy, asr(load64(fr + FR_LEFT_NY), 4));
+    if (left_dot < 0) { return 0; }
+
+    # Test against right plane
+    var right_dot = fx_mul(dx, asr(load64(fr + FR_RIGHT_NX), 4))
+    + fx_mul(dy, asr(load64(fr + FR_RIGHT_NY), 4));
+    if (right_dot < 0) { return 0; }
+
+    return 1;
+}
+
+# Test if AABB is potentially visible in the frustum.
+# Conservative: returns 1 if any part might be visible.
+# Uses corner testing -- if all 4 corners are outside the
+# same half-plane, the box is fully outside.
+fn frustum_test_aabb(fr, box) {
+    var vx = load64(fr + FR_VIEW_X);
+    var vy = load64(fr + FR_VIEW_Y);
+
+    # Pre-scale corner offsets once (signed — use asr).
+    var lx = asr(load64(box + AABB_LEFT) - vx, 4);
+    var rx = asr(load64(box + AABB_RIGHT) - vx, 4);
+    var ty = asr(load64(box + AABB_TOP) - vy, 4);
+    var by = asr(load64(box + AABB_BOTTOM) - vy, 4);
+
+    var lnx = asr(load64(fr + FR_LEFT_NX), 4);
+    var lny = asr(load64(fr + FR_LEFT_NY), 4);
+    var rnx = asr(load64(fr + FR_RIGHT_NX), 4);
+    var rny = asr(load64(fr + FR_RIGHT_NY), 4);
+
+    # Test left plane: if all 4 corners have negative dot product, reject
+    var l_fail = 0;
+    if (fx_mul(lx, lnx) + fx_mul(ty, lny) < 0) { l_fail += 1; }
+    if (fx_mul(rx, lnx) + fx_mul(ty, lny) < 0) { l_fail += 1; }
+    if (fx_mul(lx, lnx) + fx_mul(by, lny) < 0) { l_fail += 1; }
+    if (fx_mul(rx, lnx) + fx_mul(by, lny) < 0) { l_fail += 1; }
+    if (l_fail == 4) { return 0; }
+
+    # Test right plane
+    var r_fail = 0;
+    if (fx_mul(lx, rnx) + fx_mul(ty, rny) < 0) { r_fail += 1; }
+    if (fx_mul(rx, rnx) + fx_mul(ty, rny) < 0) { r_fail += 1; }
+    if (fx_mul(lx, rnx) + fx_mul(by, rny) < 0) { r_fail += 1; }
+    if (fx_mul(rx, rnx) + fx_mul(by, rny) < 0) { r_fail += 1; }
+    if (r_fail == 4) { return 0; }
+
+    return 1;
+}

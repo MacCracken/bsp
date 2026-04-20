@@ -57,9 +57,9 @@ fn main() {
         # Point-on-side (must return 0 or 1)
         var s = bsp_point_side(ax1, ay1, bx1, by1, bx2 - bx1, by2 - by1);
         if (s != 0) { if (s != 1) {
-            syscall(1, 2, "FAIL: bad side value\n", 21);
-            syscall(60, 1);
-        } }
+                syscall(1, 2, "FAIL: bad side value\n", 21);
+                syscall(60, 1);
+            } }
 
         # Degenerate: zero-length segment
         bsp_seg_intersect(ax1, ay1, ax1, ay1, bx1, by1, bx2, by2);

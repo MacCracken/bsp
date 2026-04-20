@@ -5,6 +5,37 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-04-20
+
+### Added
+
+- **`[lib]` section in `cyrius.cyml`** — lists `src/*.cyr` modules in
+  include order for the `cyrius distlib` target. Migrated the manifest
+  from TOML→CYML (keeping `cyrius.toml` alongside for build-tool
+  compatibility during the 5.x transition). Pattern mirrors
+  `libro/cyrius.cyml`.
+- **`dist/bsp.cyr`** — single-file bundled distribution (849 lines)
+  concatenating the 9 `src/*.cyr` modules in dependency order (fixed →
+  aabb → intersect → tree → traverse → query → blockmap → frustum).
+  Generated to match Cyrius's single-pass forward-reference resolution.
+  Consumers vendor this one file into their own `lib/` — identical shape
+  to how `libro` consumes `sigil.cyr` and `patra.cyr`.
+
+### Consumers
+
+- **cyrius-doom 0.26.0** — first real consumer of bsp-as-a-library. Prior
+  versions had `Composes: bsp` in CLAUDE.md but rolled their own BSP
+  traversal in `render.cyr`. 0.26.0 vendors `dist/bsp.cyr` to
+  `lib/bsp.cyr` and replaces `map_point_on_side` / `render_bsp_node`'s
+  ad-hoc primitives with `bsp_point_on_side` / `bsp_node_child_r/l` /
+  `bsp_is_subsector` / `bsp_subsector_idx` (112-byte node layout is
+  already compatible — same field offsets).
+
+### Gates
+
+- Tests 79/79, benches 13/13 sub-μs, fuzz 25K iters — unchanged from
+  1.1.0 (no source logic changes; this is purely packaging).
+
 ## [1.1.0] - 2026-04-20
 
 ### Fixed (signed-shift correctness audit)

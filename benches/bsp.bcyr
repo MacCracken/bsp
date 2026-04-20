@@ -110,29 +110,29 @@ fn bench_aabb_merge() {
 
 fn bench_seg_intersect_hit() {
     bsp_seg_intersect(
-        fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(10),
-        fx_from_int(0), fx_from_int(10), fx_from_int(10), fx_from_int(0));
+    fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(10),
+    fx_from_int(0), fx_from_int(10), fx_from_int(10), fx_from_int(0));
     return 0;
 }
 
 fn bench_seg_intersect_miss() {
     bsp_seg_intersect(
-        fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(0),
-        fx_from_int(0), fx_from_int(5), fx_from_int(10), fx_from_int(5));
+    fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(0),
+    fx_from_int(0), fx_from_int(5), fx_from_int(10), fx_from_int(5));
     return 0;
 }
 
 fn bench_point_seg_dist() {
     bsp_point_seg_dist(
-        fx_from_int(5), fx_from_int(5),
-        fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(0));
+    fx_from_int(5), fx_from_int(5),
+    fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(0));
     return 0;
 }
 
 fn bench_ray_cast() {
     bsp_ray_cast(
-        fx_from_int(0), fx_from_int(5), fx_from_int(1), fx_from_int(0),
-        fx_from_int(5), fx_from_int(0), fx_from_int(5), fx_from_int(10));
+    fx_from_int(0), fx_from_int(5), fx_from_int(1), fx_from_int(0),
+    fx_from_int(5), fx_from_int(0), fx_from_int(5), fx_from_int(10));
     return 0;
 }
 
@@ -166,9 +166,9 @@ fn bench_blockmap_query() {
 
 fn bench_check_sight() {
     bsp_check_sight(
-        fx_from_int(0), fx_from_int(500),
-        fx_from_int(1000), fx_from_int(500),
-        _b_walls, 8, _b_flags);
+    fx_from_int(0), fx_from_int(500),
+    fx_from_int(1000), fx_from_int(500),
+    _b_walls, 8, _b_flags);
     return 0;
 }
 

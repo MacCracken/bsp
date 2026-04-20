@@ -1,0 +1,32 @@
+[package]
+name = "bsp"
+version = "1.1.1"
+description = "BSP — Binary Space Partitioning. Spatial geometry primitives for Cyrius."
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "5.5.0"
+repository = "https://github.com/MacCracken/bsp"
+
+[build]
+entry = "src/lib.cyr"
+output = "bsp"
+
+# Library distribution. Order mirrors the include order in src/lib.cyr —
+# critical for Cyrius's single-pass forward-reference resolution.
+# `cyrius distlib` reads this section to produce dist/bsp.cyr, which is
+# how consumers (cyrius-doom ≥ 0.26.0) vendor bsp as a single-file dep
+# in their own lib/ — identical pattern to sigil/patra in libro.
+[lib]
+modules = [
+    "src/fixed.cyr",
+    "src/aabb.cyr",
+    "src/intersect.cyr",
+    "src/tree.cyr",
+    "src/traverse.cyr",
+    "src/query.cyr",
+    "src/blockmap.cyr",
+    "src/frustum.cyr",
+]
+
+[deps]
+stdlib = ["string", "alloc", "vec", "str", "fmt", "io", "syscalls", "args", "fnptr", "math", "assert", "bench"]

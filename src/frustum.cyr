@@ -55,12 +55,12 @@ fn frustum_test_point(fr, px, py) {
 
     # Test against left plane
     var left_dot = fx_mul(dx, asr(load64(fr + FR_LEFT_NX), 4))
-                 + fx_mul(dy, asr(load64(fr + FR_LEFT_NY), 4));
+    + fx_mul(dy, asr(load64(fr + FR_LEFT_NY), 4));
     if (left_dot < 0) { return 0; }
 
     # Test against right plane
     var right_dot = fx_mul(dx, asr(load64(fr + FR_RIGHT_NX), 4))
-                  + fx_mul(dy, asr(load64(fr + FR_RIGHT_NY), 4));
+    + fx_mul(dy, asr(load64(fr + FR_RIGHT_NY), 4));
     if (right_dot < 0) { return 0; }
 
     return 1;
