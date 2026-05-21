@@ -5,6 +5,46 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-05-21
+
+### Changed
+
+- **Cyrius 6.0.1** — toolchain bump from 5.5.2. Pure pin move, no
+  source changes. Picks up the v5.7.x → v6.0.1 band: v5.8.x sum-type
+  / `Result<T,E>` / `?` / exhaustive-match infrastructure, v5.11.x
+  annotation arc (`fn foo(): i64`), v5.11.59 DCE-aware undef-fn
+  reachability filter, v5.11.60 `_exec3` argv/envp byte-contract fix,
+  v5.11.65 CVE-05 tok_names mangle-path overflow fix, v6.0.0
+  `cyrc → cybs` + `cc5 → cycc` binary rename ceremony, v6.0.1
+  stdlib-resolution path hotfixes.
+- **Binary growth (standalone bsp)**: 76,496 → 94,640 B (**+18,144 B,
+  +23.7 %**) on 6.0.1. Honest growth-tax from the v5.8.x sum-type
+  emit + v5.11.x annotation-arc rt-table widening. Cyrius roadmap
+  documents this as default-expected
+  ([[feedback_perf_deltas_growth_tax_default]]); v6.0.x byte-array
+  literal peephole + v6.0.x dead-code careful sweep are expected
+  to recover a portion. 79/79 tests pass, 13/13 benches sub-μs
+  (variance-level noise), 25K fuzz iters across 3 harnesses clean.
+- **`cyrius.cyml`** — `version = "${file:VERSION}"` single-source pattern
+  (matches patra/vani/sakshi/mihi). Legacy `cyrius.toml` compat shim
+  removed — the .cyml manifest is the only manifest now.
+- **`dist/bsp.cyr` header** bumped to `Version: 1.1.3`. Bundle content
+  otherwise byte-identical to 1.1.2 — pure pin change; downstream
+  consumers (cyrius-doom ≥ 0.27.0) re-fetch the same 849-line
+  concatenation.
+
+### Forward (1.2.x outlook)
+
+- Sum-type / `Result<T,E>` adoption survey at the public API boundary
+  — `bsp_*_r` Result-returning variants for the small surface that
+  can fail (out-of-bounds subsector lookups, blockmap-cell ranges
+  outside the grid). Additive only; existing `i64`-return signatures
+  preserved per SemVer.
+- Type annotations (`: i64`, `: Result`) on the public surface as
+  consumer-side documentation. Mechanical sweep; zero-codegen-change.
+- O3 real-DCE re-bench once the cyrius pass lands — current 65 KB
+  of NOPed unreachable code becomes a real binary shrink.
+
 ## [1.1.2] - 2026-04-20
 
 ### Changed

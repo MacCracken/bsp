@@ -6,10 +6,28 @@
 
 - **Type**: Shared library — geometry foundation for games, compositors, spatial systems
 - **License**: GPL-3.0-only
-- **Language**: Cyrius (native, compiled via cc5 5.5.0)
-- **Version**: SemVer, version file at `VERSION`
-- **Binary contribution**: ~2KB compiled (837 lines across 9 modules)
-- **Status**: v1.1.2 — STABLE on Cyrius 5.5.2. 79 tests passing, 13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations). 1.1.2 bumps the Cyrius pin to 5.5.2 (−1,448 B standalone binary from enum-constant fold; no source changes). 1.1.1 added `[lib]` manifest section and `dist/bsp.cyr` single-file bundle — first downstream consumer is cyrius-doom 0.26.1 (swaps its ad-hoc BSP traversal for bsp library primitives). 1.1.0 landed the signed-shift correctness audit (`asr()` for all signed shifts; fixed `aabb_center_*` INT64_MAX wrap and `bsp_point_seg_dist` symmetry on sub-precision segments).
+- **Language**: Cyrius (native, compiled via cycc 6.0.1)
+- **Version**: SemVer, single source of truth at `VERSION` (referenced
+  via `version = "${file:VERSION}"` in `cyrius.cyml`)
+- **Binary contribution**: ~2KB compiled (849 lines across 9 modules
+  in `dist/bsp.cyr`)
+- **Status**: v1.1.3 — STABLE on Cyrius 6.0.1. 79 tests passing,
+  13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations).
+  1.1.3 bumps the Cyrius pin to 6.0.1 (covers v5.8.x sum-types /
+  `Result<T,E>` / `?` / exhaustive-match, v5.11.x annotation arc,
+  v5.11.65 CVE-05 fix in the compiler, v6.0.0 `cyrc → cybs` +
+  `cc5 → cycc` rename ceremony, v6.0.1 stdlib-path hotfixes;
+  +18,144 B standalone binary growth-tax from the v5.8.x sum-type
+  emit + v5.11.x annotation rt-table; no source changes).
+  Legacy `cyrius.toml` removed — `cyrius.cyml` is the single
+  manifest, matching patra/vani/sakshi/mihi convention.
+  1.1.2 bumped to 5.5.2 (−1,448 B from enum-constant fold). 1.1.1
+  added `[lib]` manifest section and `dist/bsp.cyr` single-file
+  bundle — first downstream consumer is cyrius-doom 0.26.1
+  (swaps its ad-hoc BSP traversal for bsp library primitives).
+  1.1.0 landed the signed-shift correctness audit (`asr()` for all
+  signed shifts; fixed `aabb_center_*` INT64_MAX wrap and
+  `bsp_point_seg_dist` symmetry on sub-precision segments).
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)
@@ -64,7 +82,7 @@ src/
 ### Work Loop (continuous)
 
 1. Work phase — implement, fix, optimize
-2. Build check: `cyrius build` or `cat tests/bsp.tcyr | cc5 > build/test && ./build/test`
+2. Build check: `cyrius build src/lib.cyr build/bsp`
 3. Run tests: `cyrius test tests/bsp.tcyr` — assert "0 failed"
 4. Run benchmarks: `cyrius bench benches/bsp.bcyr` — all sub-microsecond
 5. Run fuzz: `cyrius fuzz` — fuzz/fuzz_intersect.cyr, fuzz/fuzz_aabb.cyr, fuzz/fuzz_blockmap.cyr
