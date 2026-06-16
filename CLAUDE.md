@@ -6,14 +6,18 @@
 
 - **Type**: Shared library — geometry foundation for games, compositors, spatial systems
 - **License**: GPL-3.0-only
-- **Language**: Cyrius (native, compiled via cycc 6.0.1)
+- **Language**: Cyrius (native, compiled via cycc 6.2.11)
 - **Version**: SemVer, single source of truth at `VERSION` (referenced
   via `version = "${file:VERSION}"` in `cyrius.cyml`)
 - **Binary contribution**: ~2KB compiled (849 lines across 9 modules
   in `dist/bsp.cyr`)
-- **Status**: v1.1.3 — STABLE on Cyrius 6.0.1. 79 tests passing,
+- **Status**: v1.1.4 — STABLE on Cyrius 6.2.11. 79 tests passing,
   13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations).
-  1.1.3 bumps the Cyrius pin to 6.0.1 (covers v5.8.x sum-types /
+  1.1.4 bumps the Cyrius pin 6.0.1 → 6.2.11 (crosses the 6.1.0 and
+  6.2.0 minor bands plus the 6.2.x patch line; pure pin move, no
+  source changes; +2,968 B standalone binary growth-tax,
+  94,640 → 97,608 B, from prelude/codegen widening).
+  1.1.3 bumped the Cyrius pin to 6.0.1 (covers v5.8.x sum-types /
   `Result<T,E>` / `?` / exhaustive-match, v5.11.x annotation arc,
   v5.11.65 CVE-05 fix in the compiler, v6.0.0 `cyrc → cybs` +
   `cc5 → cycc` rename ceremony, v6.0.1 stdlib-path hotfixes;

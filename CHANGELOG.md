@@ -5,6 +5,36 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.4] - 2026-06-15
+
+### Changed
+
+- **Cyrius 6.2.11** — toolchain pin bump from 6.0.1. Pure pin move, no
+  source changes. Crosses two minor bands (6.0.x → 6.1.0 → 6.2.x) plus
+  the 6.2.x patch line up to 6.2.11. Library source is untouched; the
+  delta is entirely codegen + the version-pinned stdlib snapshot
+  (`~/.cyrius/versions/6.2.11/lib/`) the build resolves against.
+- **Binary growth (standalone bsp)**: 94,640 → 97,608 B (**+2,968 B,
+  +3.14 %**) on 6.2.11. Honest growth-tax from the 6.0.1 → 6.2.11
+  prelude/codegen widening (unreachable-fn footprint 65,572 → 68,743 B,
+  365 → 373 fns). Consistent with the default-expected growth pattern
+  documented for the Cyrius roadmap
+  ([[feedback_perf_deltas_growth_tax_default]]); `CYRIUS_DCE=1` NOPs the
+  unreachable code in place (same file size, inert bytes) per the
+  release-build contract. 79/79 tests pass, 13/13 benches sub-μs
+  (min 419–908 ns, variance-level noise vs 6.0.1), 25K fuzz iters across
+  3 harnesses (10K intersect + 10K aabb + 5K blockmap) clean.
+- **`dist/bsp.cyr` header** bumped to `Version: 1.1.4`. Bundle code is
+  byte-identical to 1.1.3 — pure pin change, no source drift; downstream
+  consumers (cyrius-doom) re-fetch the same 849-line concatenation. (The
+  6.2.x `cyrius distlib` emits a reformatted header/separator style; the
+  curated header is preserved here so the bundle stays a one-line diff.)
+- **CI** unchanged structurally — `cyrius.cyml`'s `cyrius =` line remains
+  the single source of truth for the toolchain version that ci.yml /
+  release.yml install, so the 6.2.11 bump propagates with no workflow
+  edits. Release job's pre-flight HTTP check will gate on the 6.2.11
+  tarball being published upstream.
+
 ## [1.1.3] - 2026-05-21
 
 ### Changed
@@ -32,6 +62,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   otherwise byte-identical to 1.1.2 — pure pin change; downstream
   consumers (cyrius-doom ≥ 0.27.0) re-fetch the same 849-line
   concatenation.
+- **CI modernization** (matches patra/cyrius-doom CI shape):
+  - `.cyrius-toolchain` retired — was pinned to `5.5.0`, would have
+    installed wrong cyrius for the 6.0.1 pin in `cyrius.cyml`. CI now
+    reads the toolchain version from `cyrius.cyml` (single source of
+    truth, same pattern vani/yukti/patra/cyrius-doom use).
+  - Version-pinned install layout: `~/.cyrius/versions/$V/{bin,lib}/`
+    (cycc 6.0.1's stdlib resolver prefers this path).
+  - Pre-flight HTTP check on the cyrius release tarball — surfaces a
+    clear error if `cyrius.cyml`'s `cyrius =` pin was bumped ahead of
+    the published release (same pattern patra v1.9.0 CI added).
+  - Docs-job required-files list: `cyrius.toml` → `cyrius.cyml`.
+  - New `Verify version consistency` step in the docs job —
+    `${file:VERSION}` template-aware (resolves to `VERSION` contents),
+    asserts VERSION file == cyrius.cyml `version =` line and that
+    VERSION appears in CHANGELOG.md.
 
 ### Forward (1.2.x outlook)
 
