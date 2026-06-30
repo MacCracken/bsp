@@ -17,7 +17,17 @@
 fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
     var dx = px - lx;
     var dy = py - ly;
-    # Shift down to avoid overflow in multiplication
+    # Pre-shift each operand by 8 (asr) before multiplying so the cross
+    # product can't overflow i64 at DOOM coordinate scale. DOOM coords run
+    # to ~±2^31 fixed; the operand differences here (dx, ldy) reach ~±2^32,
+    # so a full-precision product would be ~2^64 and overflow. Pre-shifting
+    # yields operands of ~±2^24, products ~±2^48 — well within range. Cost:
+    # ~8 bits of precision per operand, so a point within ~1/256 of the
+    # line's scale may classify to the wrong side. A smaller shift (asr 4,
+    # as frustum.cyr uses) is also overflow-safe here and keeps more
+    # precision, but it MOVES the side-classification boundary — changing
+    # stable test/fuzz outputs across the 1.x API — so do not change it
+    # without re-running tests + fuzz.
     var left = (asr(dx, 8) * asr(ldy, 8)) ;
     var right = (asr(dy, 8) * asr(ldx, 8)) ;
     if (left >= right) { return 0; }
@@ -51,16 +61,19 @@ fn _seg_check(denom, t1_num, t2_num) {
 }
 
 fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
-    var dax = ax2 - ax1;
-    var day = ay2 - ay1;
-    var dbx = bx2 - bx1;
-    var dby = by2 - by1;
-    var denom = asr(dax, 8) * asr(dby, 8) - asr(day, 8) * asr(dbx, 8);
+    # Pre-shift each delta by 8 once (asr is signed, deterministic) — the
+    # un-shifted deltas are used nowhere else, so this is value-identical to
+    # shifting at each use and halves the asr count (12 → 6).
+    var dax = asr(ax2 - ax1, 8);
+    var day = asr(ay2 - ay1, 8);
+    var dbx = asr(bx2 - bx1, 8);
+    var dby = asr(by2 - by1, 8);
+    var denom = dax * dby - day * dbx;
     if (denom == 0) { return 0; }
-    var abx = bx1 - ax1;
-    var aby = by1 - ay1;
-    var t1_num = asr(abx, 8) * asr(dby, 8) - asr(aby, 8) * asr(dbx, 8);
-    var t2_num = asr(abx, 8) * asr(day, 8) - asr(aby, 8) * asr(dax, 8);
+    var abx = asr(bx1 - ax1, 8);
+    var aby = asr(by1 - ay1, 8);
+    var t1_num = abx * dby - aby * dbx;
+    var t2_num = abx * day - aby * dax;
     return _seg_check(denom, t1_num, t2_num);
 }
 
@@ -104,17 +117,22 @@ fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
 # The actual intersection point = (ox + t*dx, oy + t*dy).
 
 fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
-    var sdx = sx2 - sx1;
-    var sdy = sy2 - sy1;
+    # Pre-shift each operand by 8 once (asr is signed, deterministic) — the
+    # un-shifted dx/dy/sdx/sdy/abx/aby feed only these products, so this is
+    # value-identical to shifting at each use and halves the asr count (12 → 6).
+    var sdx = asr(sx2 - sx1, 8);
+    var sdy = asr(sy2 - sy1, 8);
+    var dxs = asr(dx, 8);
+    var dys = asr(dy, 8);
 
-    var denom = asr(dx, 8) * asr(sdy, 8) - asr(dy, 8) * asr(sdx, 8);
+    var denom = dxs * sdy - dys * sdx;
     if (denom == 0) { return -1; }
 
-    var abx = sx1 - ox;
-    var aby = sy1 - oy;
+    var abx = asr(sx1 - ox, 8);
+    var aby = asr(sy1 - oy, 8);
 
-    var t_ray_num = asr(abx, 8) * asr(sdy, 8) - asr(aby, 8) * asr(sdx, 8);
-    var t_seg_num = asr(abx, 8) * asr(dy, 8) - asr(aby, 8) * asr(dx, 8);
+    var t_ray_num = abx * sdy - aby * sdx;
+    var t_seg_num = abx * dys - aby * dxs;
 
     # Check signs without division
     if (denom > 0) {

@@ -85,20 +85,30 @@ fn frustum_test_aabb(fr, box) {
     var rnx = asr(load64(fr + FR_RIGHT_NX), 4);
     var rny = asr(load64(fr + FR_RIGHT_NY), 4);
 
-    # Test left plane: if all 4 corners have negative dot product, reject
+    # Test left plane: if all 4 corners have negative dot product, reject.
+    # Each plane has only 4 distinct corner products (lx/rx x-normal, ty/by
+    # y-normal) shared across the 4 corners -- hoist them (8 fx_mul -> 4).
+    var lx_lnx = fx_mul(lx, lnx);
+    var rx_lnx = fx_mul(rx, lnx);
+    var ty_lny = fx_mul(ty, lny);
+    var by_lny = fx_mul(by, lny);
     var l_fail = 0;
-    if (fx_mul(lx, lnx) + fx_mul(ty, lny) < 0) { l_fail += 1; }
-    if (fx_mul(rx, lnx) + fx_mul(ty, lny) < 0) { l_fail += 1; }
-    if (fx_mul(lx, lnx) + fx_mul(by, lny) < 0) { l_fail += 1; }
-    if (fx_mul(rx, lnx) + fx_mul(by, lny) < 0) { l_fail += 1; }
+    if (lx_lnx + ty_lny < 0) { l_fail += 1; }
+    if (rx_lnx + ty_lny < 0) { l_fail += 1; }
+    if (lx_lnx + by_lny < 0) { l_fail += 1; }
+    if (rx_lnx + by_lny < 0) { l_fail += 1; }
     if (l_fail == 4) { return 0; }
 
-    # Test right plane
+    # Test right plane (same 4-distinct-products structure).
+    var lx_rnx = fx_mul(lx, rnx);
+    var rx_rnx = fx_mul(rx, rnx);
+    var ty_rny = fx_mul(ty, rny);
+    var by_rny = fx_mul(by, rny);
     var r_fail = 0;
-    if (fx_mul(lx, rnx) + fx_mul(ty, rny) < 0) { r_fail += 1; }
-    if (fx_mul(rx, rnx) + fx_mul(ty, rny) < 0) { r_fail += 1; }
-    if (fx_mul(lx, rnx) + fx_mul(by, rny) < 0) { r_fail += 1; }
-    if (fx_mul(rx, rnx) + fx_mul(by, rny) < 0) { r_fail += 1; }
+    if (lx_rnx + ty_rny < 0) { r_fail += 1; }
+    if (rx_rnx + ty_rny < 0) { r_fail += 1; }
+    if (lx_rnx + by_rny < 0) { r_fail += 1; }
+    if (rx_rnx + by_rny < 0) { r_fail += 1; }
     if (r_fail == 4) { return 0; }
 
     return 1;

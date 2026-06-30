@@ -25,8 +25,9 @@ fn fx_div(a, b) {
     if (b == 0) { return FX_MAX; }
     var aa = a;
     var bb = b;
-    if (aa > 32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
-    if (aa < -32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
+    # Scale down once if |aa| would overflow `aa << 16` (32767 * 65536 fits
+    # in i64; larger needs the >>8 guard). The two sign cases are one test.
+    if (fx_abs(aa) > 32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
     return (aa << 16) / bb;
 }
 

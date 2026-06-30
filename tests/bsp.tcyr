@@ -345,6 +345,80 @@ fn main() {
     store64(flags, 1);
     assert_eq(bsp_check_sight(o, five, ten, five, walls, 1, flags), 1, "two-sided wall doesn't block");
 
+    # ============================================================
+    test_group("spatial queries (query.cyr)");
+    # ============================================================
+
+    # nearest_seg: two degenerate (point) segments. Both lie farther from
+    # the origin than the pre-1.2.0 sentinel 2147483647 (=2^31-1, ~32768.0
+    # world units), which the older code never beat -> it returned seg 0
+    # (the FARTHER one). The 1.2.0 INT64_MAX seed restores correct selection.
+    var qsegs = alloc(64);
+    store64(qsegs,      fx_from_int(60000)); store64(qsegs + 8,  fx_from_int(60000));
+    store64(qsegs + 16, fx_from_int(60000)); store64(qsegs + 24, fx_from_int(60000));
+    store64(qsegs + 32, fx_from_int(40000)); store64(qsegs + 40, fx_from_int(40000));
+    store64(qsegs + 48, fx_from_int(40000)); store64(qsegs + 56, fx_from_int(40000));
+
+    assert_eq(bsp_nearest_seg(0, 0, qsegs, 2), 1, "nearest_seg far query picks nearer seg (1.2.0 INT64_MAX sentinel)");
+    assert_eq(bsp_nearest_seg(fx_from_int(41000), fx_from_int(41000), qsegs, 2), 1, "nearest_seg picks closer of two (in-range)");
+    assert_eq(bsp_nearest_seg(0, 0, qsegs, 0), -1, "nearest_seg empty = -1");
+
+    # count_in_aabb: 16 bytes per entity (x, y). Box [0,100]x[0,100].
+    var ents = alloc(48);
+    store64(ents,      fx_from_int(50));  store64(ents + 8,  fx_from_int(50));
+    store64(ents + 16, fx_from_int(150)); store64(ents + 24, fx_from_int(150));
+    store64(ents + 32, fx_from_int(10));  store64(ents + 40, fx_from_int(10));
+    var qbox[32];
+    aabb_set(&qbox, fx_from_int(100), fx_from_int(0), fx_from_int(0), fx_from_int(100));
+    assert_eq(bsp_count_in_aabb(&qbox, ents, 3), 2, "count_in_aabb = 2 of 3 inside");
+    assert_eq(bsp_count_in_aabb(&qbox, ents, 0), 0, "count_in_aabb empty = 0");
+
+    # point_in_subsector: CCW unit box [0,10]^2, interior vs exterior point.
+    var psegs = alloc(128);
+    store64(psegs,       fx_from_int(0));  store64(psegs + 8,   fx_from_int(0));
+    store64(psegs + 16,  fx_from_int(10)); store64(psegs + 24,  fx_from_int(0));
+    store64(psegs + 32,  fx_from_int(10)); store64(psegs + 40,  fx_from_int(0));
+    store64(psegs + 48,  fx_from_int(10)); store64(psegs + 56,  fx_from_int(10));
+    store64(psegs + 64,  fx_from_int(10)); store64(psegs + 72,  fx_from_int(10));
+    store64(psegs + 80,  fx_from_int(0));  store64(psegs + 88,  fx_from_int(10));
+    store64(psegs + 96,  fx_from_int(0));  store64(psegs + 104, fx_from_int(10));
+    store64(psegs + 112, fx_from_int(0));  store64(psegs + 120, fx_from_int(0));
+    assert_eq(bsp_point_in_subsector(fx_from_int(5), fx_from_int(5), psegs, 4), 1, "point inside convex box");
+    assert_eq(bsp_point_in_subsector(fx_from_int(15), fx_from_int(5), psegs, 4), 0, "point outside convex box");
+
+    # ============================================================
+    test_group("view frustum (frustum.cyr)");
+    # ============================================================
+
+    # Viewer at origin looking down +X, 90 deg FOV (half = 45 deg).
+    # cos45 = sin45 = round(0.70710678 * 65536) = 46341.
+    var fr = alloc(48);
+    frustum_build(fr, 0, 0, 46341, 46341, 46341, -46341);
+
+    assert_eq(frustum_test_point(fr, fx_from_int(100), 0), 1, "point straight ahead is inside");
+    assert_eq(frustum_test_point(fr, fx_from_int(-100), 0), 0, "point behind viewer is outside");
+    assert_eq(frustum_test_point(fr, fx_from_int(100), fx_from_int(40)), 1, "point ahead-left inside 45 deg");
+    assert_eq(frustum_test_point(fr, fx_from_int(100), fx_from_int(-40)), 1, "point ahead-right inside 45 deg");
+    assert_eq(frustum_test_point(fr, 0, fx_from_int(100)), 0, "point straight up at edge is outside");
+
+    # frustum_test_aabb is a CONSERVATIVE 4-corner test: it rejects only when
+    # all 4 corners fail the SAME half-plane. A box dead ahead is accepted; a
+    # box up high (all corners past the left plane) is rejected; a box fully
+    # behind is NOT rejected (corners fail different planes) -- documented
+    # conservative behavior, not a bug. These lock in frustum_test_aabb's
+    # output across the 1.2.0 product-hoist refactor.
+    var fbox_ahead[32];
+    aabb_set(&fbox_ahead, fx_from_int(50), fx_from_int(-50), fx_from_int(50), fx_from_int(150));
+    assert_eq(frustum_test_aabb(fr, &fbox_ahead), 1, "aabb dead ahead is visible");
+
+    var fbox_high[32];
+    aabb_set(&fbox_high, fx_from_int(200), fx_from_int(100), fx_from_int(-50), fx_from_int(50));
+    assert_eq(frustum_test_aabb(fr, &fbox_high), 0, "aabb high above is culled");
+
+    var fbox_behind[32];
+    aabb_set(&fbox_behind, fx_from_int(50), fx_from_int(-50), fx_from_int(-150), fx_from_int(-50));
+    assert_eq(frustum_test_aabb(fr, &fbox_behind), 1, "aabb behind: conservative pass (not culled)");
+
     return assert_summary();
 }
 

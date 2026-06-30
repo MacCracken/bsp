@@ -23,10 +23,14 @@
 # Returns: 0 = right/front, 1 = left/back
 
 fn bsp_point_on_side(nodes, node_idx, px, py) {
-    var nx = bsp_node_x(nodes, node_idx);
-    var ny = bsp_node_y(nodes, node_idx);
-    var ndx = bsp_node_dx(nodes, node_idx);
-    var ndy = bsp_node_dy(nodes, node_idx);
+    # Compute the node base once instead of four accessor calls that each
+    # recompute node_idx * BSP_NODE_SIZE. Field offsets match the accessors
+    # (BSP_NODE_X..BSP_NODE_DY); this is the hot path under bsp_find_subsector.
+    var base = nodes + node_idx * BSP_NODE_SIZE;
+    var nx = load64(base + BSP_NODE_X);
+    var ny = load64(base + BSP_NODE_Y);
+    var ndx = load64(base + BSP_NODE_DX);
+    var ndy = load64(base + BSP_NODE_DY);
     return bsp_point_side(px, py, nx, ny, ndx, ndy);
 }
 
@@ -65,16 +69,10 @@ fn bsp_find_subsector(nodes, node_count, px, py) {
 # Returns 1 if potentially visible, 0 if fully behind.
 
 fn bsp_bbox_visible(bbox, vx, vy, vangle_cos, vangle_sin, fov_half) {
-    # For now: always visible (conservative)
-    # Full frustum culling requires the frustum.cyr module
-    # This is a placeholder for the culling optimization
-    var top = load64(bbox + AABB_TOP);
-    var bottom = load64(bbox + AABB_BOTTOM);
-    var left = load64(bbox + AABB_LEFT);
-    var right = load64(bbox + AABB_RIGHT);
-
-    # Quick reject: if all 4 corners are behind the viewer, skip
-    # (Simple check: is the bbox entirely behind vx,vy?)
-    # This is a rough approximation -- frustum.cyr does it properly
+    # For now: always visible (conservative). Full frustum culling lives in
+    # frustum.cyr (frustum_test_aabb); this remains a placeholder. The
+    # bbox/vx/vy/vangle_cos/vangle_sin/fov_half params are kept for API
+    # stability and the future cull implementation. No bbox fields are read
+    # yet — loading them here would be dead work, so we don't.
     return 1;
 }

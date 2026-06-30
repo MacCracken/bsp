@@ -1,14 +1,15 @@
 # BSP Development Roadmap
 
-> **v1.1.3** — 94,640 B standalone (cycc 6.0.1; +18,144 B
-> growth-tax from the v5.11.x annotation rt-table + v5.8.x sum-type
-> emit). 79/79 tests, 13/13 benches sub-μs, 25K fuzz iters across
-> 3 harnesses clean. Zero deps (stdlib-only). 849-line `dist/bsp.cyr`
-> bundle consumed by **cyrius-doom 0.27.x**. Manifest hygiene:
-> `cyrius.toml` retired, single `cyrius.cyml` with
-> `version = "${file:VERSION}"` (matches patra/vani/sakshi/mihi
-> convention). Source content byte-identical to 1.1.2 — pure
-> Cyrius-pin lift.
+> **v1.2.0** — 98,208 B standalone (cycc 6.3.5; −352 B vs 1.1.5).
+> Deep audit / optimization release — the first source-change release
+> since 1.1.0. 94/94 tests, 13/13 benches sub-μs, 25K fuzz gate + 300K
+> stress clean, and a 500K-iter differential harness proving every perf
+> hoist bit-identical to 1.1.5. Fixes the `bsp_nearest_seg` far-query
+> sentinel bug; instruction-count hoists in seg_intersect / ray_cast /
+> frustum_test_aabb / point_on_side; dead-load removal; `fx_div` branch
+> unify; first-ever `query.cyr` + `frustum.cyr` test coverage. Cyrius
+> pin unchanged at 6.3.5. 890-line `dist/bsp.cyr` bundle consumed by
+> **cyrius-doom 0.27.x**.
 
 ## Completed
 
@@ -19,6 +20,8 @@
 | v1.1.1 | `[lib]` manifest section + `dist/bsp.cyr` single-file bundle (849 lines); cyrius-doom 0.26.0 is first downstream consumer |
 | v1.1.2 | Cyrius 5.5.0 → 5.5.2 (enum-constant fold; −1,448 B standalone) |
 | v1.1.3 | Cyrius 5.5.2 → 6.0.1 (covers v5.8.x language arc, v5.11.x annotation arc, v6.0.0 rename ceremony, v6.0.1 path hotfixes); manifest modernized (single `cyrius.cyml`, `${file:VERSION}`); +18,144 B growth-tax; bundle content byte-identical to 1.1.2 |
+| v1.1.4 / v1.1.5 | Cyrius pin lifts 6.0.1 → 6.2.11 → 6.3.5 (pure pin moves, no source changes; growth-tax 94,640 → 98,560 B) |
+| v1.2.0 | Deep audit / optimization release (source-change, pin held at 6.3.5): `bsp_nearest_seg` sentinel bug fix; instruction-count hoists (seg_intersect/ray_cast 12→6 asr, frustum_test_aabb 16→8 fx_mul, point_on_side 4→1 multiply); dead-load removal; `fx_div` branch unify; first `query.cyr`/`frustum.cyr` tests (79→94); 500K-iter differential proof; −352 B (98,560 → 98,208 B) |
 
 ## v1.2.x — Language-adoption arc
 
@@ -31,7 +34,13 @@ particularly clean canvas for the adoption sweep — there's no
 state to thread, so `Result` adoption is purely about contract
 clarity at the API boundary.
 
-### v1.2.0 — `: i64` return annotations on public surface
+> **Note** — v1.2.0 shipped as a deep audit / optimization release
+> (correctness + instruction-count perf) rather than the annotation
+> sweep originally slotted here. The language-adoption items below
+> shift one patch level: annotations → 1.2.1, `Result` → 1.2.2,
+> test-surface refactor → 1.2.3.
+
+### v1.2.1 — `: i64` return annotations on public surface
 
 Mechanical sweep. Same shape as vani 0.9.3's annotation pass.
 Parse-only, zero-codegen-change, ABI-identical. Documents the
@@ -43,7 +52,7 @@ return contract inline; sets up for v1.2.1's `Result` adoption.
 | 2 | Re-bench standalone bsp under the annotation pass | benches/ | Confirm variance-level deltas only |
 | 3 | Regen `dist/bsp.cyr` with annotated signatures | dist/ | Bundle line count rises ~5 % (annotation suffixes) |
 
-### v1.2.1 — `Result<T, E>` for fallible queries
+### v1.2.2 — `Result<T, E>` for fallible queries
 
 Adopt the v5.8.28 `lib/result.cyr` carve-out at the small
 fallible-query surface. bsp's pure-geometry primitives mostly
@@ -59,7 +68,7 @@ as sentinel returns:
 | 3 | `bsp_nearest_seg_r` returns `Result<SegRef, BspError>` | query.cyr | `Err(BspNoSegs)` when subsector is empty |
 | 4 | Existing `i64`-return variants preserved per SemVer | all | Additive only — `_r` suffix on Result variants |
 
-### v1.2.2 — Test surface refactor onto `lib/test.cyr`
+### v1.2.3 — Test surface refactor onto `lib/test.cyr`
 
 Adopt the v5.7.43 `test_each(cases, fn)` helper. Current
 `tests/bsp.tcyr` is ~79 hand-rolled asserts grouped by 14

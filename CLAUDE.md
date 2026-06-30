@@ -9,15 +9,25 @@
 - **Language**: Cyrius (native, compiled via cycc 6.3.5)
 - **Version**: SemVer, single source of truth at `VERSION` (referenced
   via `version = "${file:VERSION}"` in `cyrius.cyml`)
-- **Binary contribution**: ~2KB compiled (849 lines across 9 modules
+- **Binary contribution**: ~2KB compiled (890 lines across 9 modules
   in `dist/bsp.cyr`)
-- **Status**: v1.1.5 — STABLE on Cyrius 6.3.5. 79 tests passing,
-  13 benchmarks sub-microsecond, 3 fuzz harnesses (25K iterations).
-  1.1.5 bumps the Cyrius pin 6.2.11 → 6.3.5 (crosses the 6.3.0 minor
-  band plus the 6.3.x patch line; pure pin move, no source changes;
-  +952 B standalone binary growth-tax, 97,608 → 98,560 B, from
-  prelude/codegen widening; clears the 6.2.11→6.3.5 toolchain-drift
-  warning).
+- **Status**: v1.2.0 — STABLE on Cyrius 6.3.5. 94 tests passing,
+  13 benchmarks sub-microsecond, 3 fuzz harnesses (25K-iter standard
+  gate). 1.2.0 is a deep audit / optimization release — the first
+  SOURCE-change release since 1.1.0 (1.1.1–1.1.5 were packaging/pin
+  moves). Cyrius pin unchanged at 6.3.5. Applies 12 audited, adversarially
+  verified findings: fixes the `bsp_nearest_seg` far-query sentinel bug
+  (2³¹−1 → INT64_MAX — cross-map queries silently returned segment 0);
+  instruction-count perf hoists in `bsp_seg_intersect` / `bsp_ray_cast`
+  (12 `asr` → 6 each), `frustum_test_aabb` (16 `fx_mul` → 8), and
+  `bsp_point_on_side` (one node-base multiply, not four); removes dead
+  loads in `bsp_bbox_visible`; unifies `fx_div`'s two scale-down branches;
+  adds the previously-missing `query.cyr` / `frustum.cyr` test groups
+  (79 → 94). Every perf change proven bit-identical to 1.1.5 over a
+  500K-iter differential harness. Standalone binary 98,560 → 98,208 B
+  (−352 B, −0.36 %) — a real shrink, not a pin-move growth-tax.
+  1.1.5 bumped the Cyrius pin 6.2.11 → 6.3.5 (pure pin move; +952 B
+  growth-tax, 97,608 → 98,560 B; cleared the toolchain-drift warning).
   1.1.4 bumps the Cyrius pin 6.0.1 → 6.2.11 (crosses the 6.1.0 and
   6.2.0 minor bands plus the 6.2.x patch line; pure pin move, no
   source changes; +2,968 B standalone binary growth-tax,
@@ -97,7 +107,7 @@ src/
 5. Run fuzz: `cyrius fuzz` — fuzz/fuzz_intersect.cyr, fuzz/fuzz_aabb.cyr, fuzz/fuzz_blockmap.cyr
 6. Review — correctness (algebraic properties), performance (ns/op), robustness (no crashes on random input)
 7. Documentation — CHANGELOG, roadmap
-8. Version check — VERSION, cyrius.toml all in sync
+8. Version check — VERSION, cyrius.cyml, dist/bsp.cyr header all in sync
 
 ### Task Sizing
 
@@ -140,11 +150,11 @@ cyrius build benches/bsp.bcyr build/bench && ./build/bench
 # Fuzz (3 harnesses: intersect, aabb, blockmap)
 cyrius build fuzz/fuzz_intersect.cyr build/fuzz_i && ./build/fuzz_i
 
-# Consumer usage via cyrius.toml git dep:
+# Consumer usage: vendor dist/bsp.cyr, or declare a cyrius.cyml git dep:
 # [deps.bsp]
 # git = "https://github.com/MacCracken/bsp"
-# tag = "0.9.0"
-# modules = ["src/lib.cyr"]
+# tag = "1.2.0"
+# modules = ["dist/bsp.cyr"]
 ```
 
 ## DO NOT
@@ -163,7 +173,7 @@ cyrius build fuzz/fuzz_intersect.cyr build/fuzz_i && ./build/fuzz_i
 ```
 Root files (required):
   README.md, CHANGELOG.md, CLAUDE.md, CONTRIBUTING.md, SECURITY.md,
-  CODE_OF_CONDUCT.md, LICENSE, VERSION, cyrius.toml
+  CODE_OF_CONDUCT.md, LICENSE, VERSION, cyrius.cyml
 
 tests/:
   bsp.tcyr — 74 assertions across 15 test groups

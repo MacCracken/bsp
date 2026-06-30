@@ -5,6 +5,109 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-29
+
+Deep audit / optimization release — the first **source-change** release since
+1.1.0 (1.1.1–1.1.5 were packaging and Cyrius-pin moves). **The Cyrius pin is
+unchanged at 6.3.5; this is a pure source-quality release.** A multi-agent
+audit fanned out across five dimensions (overflow/correctness, redundant
+computation, refactor/dedup, dead-code/API, precision/numerics); every
+candidate was adversarially verified for semantic equivalence before landing.
+12 findings applied (1 rejected as unreachable-but-harmless). The one
+behavioral change is a bug fix with a new regression test; every performance
+change is proven **bit-identical** to 1.1.5.
+
+### Fixed
+
+- **`bsp_nearest_seg` far-query correctness bug** — the running-minimum was
+  seeded at `2147483647` (2³¹−1 ≈ 32768.0 world units), but
+  `bsp_point_seg_dist` returns DOOM approximate-distance values up to
+  ~1.5·2³² (~6.4e9) at 16.16 scale. When the nearest segment lay farther than
+  ~32768 world units, `dist < best_dist` never fired and the function silently
+  returned segment index **0** instead of the true nearest. Re-seeded with
+  `INT64_MAX` (`9223372036854775807`); `FX_MAX` is unusable here because it
+  *equals* the buggy sentinel. Reproduced empirically (query (0,0): seg0 @
+  60000 won over the nearer seg1 @ 40000) and guarded by a new regression
+  assertion. DOOM-scale maps span ±32768 units, so cross-map nearest queries
+  hit this routinely.
+
+### Changed — performance (instruction-count reductions, behavior-identical)
+
+Proven bit-identical to 1.1.5 over **500,000 random-input differential
+iterations** (old-vs-new for `fx_div` / `bsp_seg_intersect` / `bsp_ray_cast` /
+`frustum_test_aabb`, zero divergence). `asr` is a pure deterministic
+sign-branch+shift, and `fx_mul` rounds each product independently, so every
+hoist below preserves the exact result.
+
+- **`bsp_seg_intersect`** — pre-shift each of the 6 deltas with `asr(...,8)`
+  once instead of twice per use: **12 `asr` → 6**. On the per-wall hot path of
+  `bsp_check_sight`.
+- **`bsp_ray_cast`** — same hoist on `dx`/`dy`/`sdx`/`sdy`/`abx`/`aby`:
+  **12 `asr` → 6**.
+- **`frustum_test_aabb`** — each half-plane has only 4 distinct corner
+  products shared across its 4 corner tests; hoisted them: **16 `fx_mul` → 8**
+  (largest single op reduction).
+- **`bsp_point_on_side`** — compute the node base (`node_idx * BSP_NODE_SIZE`)
+  once and `load64` the fields directly, replacing 4 accessor calls that each
+  recomputed the multiply. Hot path under `bsp_find_subsector`.
+- **`blockmap_query_point`** — the cell coordinates are provably in range
+  after clamping, so the per-cell `blockmap_get_cell` call is inlined to a
+  direct address computation, dropping a function call, two redundant
+  `cols`/`rows` reloads, four bounds checks, and an always-true `cell != 0`
+  guard per visited cell.
+- **`bsp_count_in_aabb`** — hoist `entities + i*16` into a base local (matches
+  the `base`-once pattern already used by the file's other per-element loops).
+
+### Changed — refactor / clarity (behavior-identical)
+
+- **`fx_div`** — unified the two mutually-exclusive scale-down branches
+  (`aa > 32767` and `aa < -32767`) into a single `fx_abs(aa) > 32767` test
+  (relies on the existing intra-module forward reference, same mechanism as
+  `_approx_dist` in intersect.cyr). −276 B of unreachable-fn footprint.
+- **`bsp_bbox_visible`** — removed 4 dead `load64` calls; the loaded AABB
+  fields were never read before the unconditional `return 1`. Signature
+  preserved (params kept) for API stability and the future cull implementation.
+- **`bsp_point_side`** — replaced the terse overflow comment with a quantified
+  note on the >>8 precision/overflow tradeoff and why the `asr 4` alternative
+  must not be adopted without re-running tests + fuzz (it moves the
+  side-classification boundary).
+- **`blockmap_query_point` header** — rewritten to state the actual broadphase
+  contract: AABB-window candidate collection, **no** exact-radius narrowing,
+  per-cell duplicates expected; caller dedupes/narrows in narrowphase.
+
+### Added
+
+- **Test coverage for `query.cyr` and `frustum.cyr`** (both previously
+  untested). New **"spatial queries"** group (`bsp_nearest_seg` incl. the
+  far-query regression, `bsp_count_in_aabb`, `bsp_point_in_subsector`) and
+  **"view frustum"** group (`frustum_test_point` + `frustum_test_aabb` golden
+  values, locking in the product hoist). **79 → 94 assertions.**
+
+### Quality gates (on Cyrius 6.3.5)
+
+- **Tests**: 94/94 pass (was 79; +15).
+- **Differential**: 500,000 random iters, OLD(1.1.5) == NEW for every
+  refactored numeric fn — zero divergence (the address-hoist refactors are
+  covered by the unit tests + fuzz harnesses).
+- **Benches**: 13/13 still sub-microsecond (min 488–907 ns; per-op averages
+  remain harness-dominated, no regression attributable to the changes).
+- **Fuzz**: standard 25K gate (10K intersect + 10K aabb + 5K blockmap) **plus**
+  300K extra stress (200K intersect across 2 seeds, 50K aabb, 50K blockmap) —
+  all clean.
+- **Binary (standalone bsp)**: 98,560 → **98,208 B (−352 B, −0.36 %)** — a
+  genuine shrink (not a pin-move growth-tax) from removed dead loads, halved
+  `asr`/`fx_mul` counts, and the unified `fx_div` branch. `CYRIUS_DCE=1` build
+  identical at 98,208 B.
+- **`dist/bsp.cyr`** regenerated from the optimized sources (849 → 890 lines;
+  growth is the added explanatory comments). The unchanged `aabb` and `tree`
+  sections are byte-identical to 1.1.5, confirming bundle-format fidelity.
+
+### Roadmap note
+
+This release reprioritizes the v1.2.x arc: the originally-planned 1.2.0 `: i64`
+annotation sweep (parse-only, zero-codegen) is deferred to 1.2.1, since the
+deep audit surfaced real correctness and performance wins worth shipping first.
+
 ## [1.1.5] - 2026-06-29
 
 ### Changed

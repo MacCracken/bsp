@@ -1,7 +1,7 @@
 # dist/bsp.cyr — bundled BSP library (single-file distribution)
 # Generated from [lib] modules in cyrius.cyml — do not edit directly.
 # Source: https://github.com/MacCracken/bsp
-# Version: 1.1.5
+# Version: 1.2.0
 # License: GPL-3.0-only
 #
 # Concatenation order matches Cyrius single-pass forward-reference
@@ -37,8 +37,9 @@ fn fx_div(a, b) {
     if (b == 0) { return FX_MAX; }
     var aa = a;
     var bb = b;
-    if (aa > 32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
-    if (aa < -32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
+    # Scale down once if |aa| would overflow `aa << 16` (32767 * 65536 fits
+    # in i64; larger needs the >>8 guard). The two sign cases are one test.
+    if (fx_abs(aa) > 32767) { aa = asr(aa, 8); bb = asr(bb, 8); if (bb == 0) { return FX_MAX; } }
     return (aa << 16) / bb;
 }
 
@@ -168,7 +169,17 @@ fn aabb_center_y(box) {
 fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
     var dx = px - lx;
     var dy = py - ly;
-    # Shift down to avoid overflow in multiplication
+    # Pre-shift each operand by 8 (asr) before multiplying so the cross
+    # product can't overflow i64 at DOOM coordinate scale. DOOM coords run
+    # to ~±2^31 fixed; the operand differences here (dx, ldy) reach ~±2^32,
+    # so a full-precision product would be ~2^64 and overflow. Pre-shifting
+    # yields operands of ~±2^24, products ~±2^48 — well within range. Cost:
+    # ~8 bits of precision per operand, so a point within ~1/256 of the
+    # line's scale may classify to the wrong side. A smaller shift (asr 4,
+    # as frustum.cyr uses) is also overflow-safe here and keeps more
+    # precision, but it MOVES the side-classification boundary — changing
+    # stable test/fuzz outputs across the 1.x API — so do not change it
+    # without re-running tests + fuzz.
     var left = (asr(dx, 8) * asr(ldy, 8)) ;
     var right = (asr(dy, 8) * asr(ldx, 8)) ;
     if (left >= right) { return 0; }
@@ -202,16 +213,19 @@ fn _seg_check(denom, t1_num, t2_num) {
 }
 
 fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
-    var dax = ax2 - ax1;
-    var day = ay2 - ay1;
-    var dbx = bx2 - bx1;
-    var dby = by2 - by1;
-    var denom = asr(dax, 8) * asr(dby, 8) - asr(day, 8) * asr(dbx, 8);
+    # Pre-shift each delta by 8 once (asr is signed, deterministic) — the
+    # un-shifted deltas are used nowhere else, so this is value-identical to
+    # shifting at each use and halves the asr count (12 → 6).
+    var dax = asr(ax2 - ax1, 8);
+    var day = asr(ay2 - ay1, 8);
+    var dbx = asr(bx2 - bx1, 8);
+    var dby = asr(by2 - by1, 8);
+    var denom = dax * dby - day * dbx;
     if (denom == 0) { return 0; }
-    var abx = bx1 - ax1;
-    var aby = by1 - ay1;
-    var t1_num = asr(abx, 8) * asr(dby, 8) - asr(aby, 8) * asr(dbx, 8);
-    var t2_num = asr(abx, 8) * asr(day, 8) - asr(aby, 8) * asr(dax, 8);
+    var abx = asr(bx1 - ax1, 8);
+    var aby = asr(by1 - ay1, 8);
+    var t1_num = abx * dby - aby * dbx;
+    var t2_num = abx * day - aby * dax;
     return _seg_check(denom, t1_num, t2_num);
 }
 
@@ -255,17 +269,22 @@ fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
 # The actual intersection point = (ox + t*dx, oy + t*dy).
 
 fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
-    var sdx = sx2 - sx1;
-    var sdy = sy2 - sy1;
+    # Pre-shift each operand by 8 once (asr is signed, deterministic) — the
+    # un-shifted dx/dy/sdx/sdy/abx/aby feed only these products, so this is
+    # value-identical to shifting at each use and halves the asr count (12 → 6).
+    var sdx = asr(sx2 - sx1, 8);
+    var sdy = asr(sy2 - sy1, 8);
+    var dxs = asr(dx, 8);
+    var dys = asr(dy, 8);
 
-    var denom = asr(dx, 8) * asr(sdy, 8) - asr(dy, 8) * asr(sdx, 8);
+    var denom = dxs * sdy - dys * sdx;
     if (denom == 0) { return -1; }
 
-    var abx = sx1 - ox;
-    var aby = sy1 - oy;
+    var abx = asr(sx1 - ox, 8);
+    var aby = asr(sy1 - oy, 8);
 
-    var t_ray_num = asr(abx, 8) * asr(sdy, 8) - asr(aby, 8) * asr(sdx, 8);
-    var t_seg_num = asr(abx, 8) * asr(dy, 8) - asr(aby, 8) * asr(dx, 8);
+    var t_ray_num = abx * sdy - aby * sdx;
+    var t_seg_num = abx * dys - aby * dxs;
 
     # Check signs without division
     if (denom > 0) {
@@ -431,10 +450,14 @@ fn bsp_node_set_children(nodes, idx, right, left) {
 # Returns: 0 = right/front, 1 = left/back
 
 fn bsp_point_on_side(nodes, node_idx, px, py) {
-    var nx = bsp_node_x(nodes, node_idx);
-    var ny = bsp_node_y(nodes, node_idx);
-    var ndx = bsp_node_dx(nodes, node_idx);
-    var ndy = bsp_node_dy(nodes, node_idx);
+    # Compute the node base once instead of four accessor calls that each
+    # recompute node_idx * BSP_NODE_SIZE. Field offsets match the accessors
+    # (BSP_NODE_X..BSP_NODE_DY); this is the hot path under bsp_find_subsector.
+    var base = nodes + node_idx * BSP_NODE_SIZE;
+    var nx = load64(base + BSP_NODE_X);
+    var ny = load64(base + BSP_NODE_Y);
+    var ndx = load64(base + BSP_NODE_DX);
+    var ndy = load64(base + BSP_NODE_DY);
     return bsp_point_side(px, py, nx, ny, ndx, ndy);
 }
 
@@ -473,17 +496,11 @@ fn bsp_find_subsector(nodes, node_count, px, py) {
 # Returns 1 if potentially visible, 0 if fully behind.
 
 fn bsp_bbox_visible(bbox, vx, vy, vangle_cos, vangle_sin, fov_half) {
-    # For now: always visible (conservative)
-    # Full frustum culling requires the frustum.cyr module
-    # This is a placeholder for the culling optimization
-    var top = load64(bbox + AABB_TOP);
-    var bottom = load64(bbox + AABB_BOTTOM);
-    var left = load64(bbox + AABB_LEFT);
-    var right = load64(bbox + AABB_RIGHT);
-
-    # Quick reject: if all 4 corners are behind the viewer, skip
-    # (Simple check: is the bbox entirely behind vx,vy?)
-    # This is a rough approximation -- frustum.cyr does it properly
+    # For now: always visible (conservative). Full frustum culling lives in
+    # frustum.cyr (frustum_test_aabb); this remains a placeholder. The
+    # bbox/vx/vy/vangle_cos/vangle_sin/fov_half params are kept for API
+    # stability and the future cull implementation. No bbox fields are read
+    # yet — loading them here would be dead work, so we don't.
     return 1;
 }
 
@@ -540,7 +557,12 @@ fn bsp_nearest_seg(px, py, segs, seg_count) {
     if (seg_count == 0) { return -1; }
 
     var best_idx = 0;
-    var best_dist = 2147483647;
+    # Seed with INT64_MAX, not 2147483647 (=2^31-1, ~32768.0 world units):
+    # bsp_point_seg_dist returns _approx_dist values up to ~1.5*2^32 for
+    # 16.16 coords, so a 2^31 seed left far (cross-map) segments never
+    # beating it — best_idx stuck at 0, returning the wrong segment. FX_MAX
+    # is also 2147483647, so it can't serve as the sentinel here.
+    var best_dist = 9223372036854775807;
 
     for (var i = 0; i < seg_count; i += 1) {
         var base = segs + i * 32;
@@ -569,8 +591,9 @@ fn bsp_nearest_seg(px, py, segs, seg_count) {
 fn bsp_count_in_aabb(box, entities, entity_count) {
     var count = 0;
     for (var i = 0; i < entity_count; i += 1) {
-        var ex = load64(entities + i * 16);
-        var ey = load64(entities + i * 16 + 8);
+        var ebase = entities + i * 16;
+        var ex = load64(ebase);
+        var ey = load64(ebase + 8);
         if (aabb_contains_point(box, ex, ey) == 1) {
             count += 1;
         }
@@ -707,8 +730,13 @@ fn blockmap_cell_seg(cell, idx) {
     return load64(cell + 8 + idx * 8);
 }
 
-# Query: get all segment indices near point (px, py) within radius.
-# Results written to out_buf (array of i64 seg indices).
+# Broadphase: collect candidate segment indices from every grid cell that
+# overlaps the query AABB [px-radius, px+radius] x [py-radius, py+radius].
+# This does NOT narrow-filter by exact radius distance, and a segment that
+# spans multiple queried cells is reported once PER cell (duplicate indices
+# are expected). Callers do exact rejection in narrowphase
+# (bsp_point_seg_dist / bsp_seg_intersect) and must dedupe if uniqueness
+# matters. Results written to out_buf (array of i64 seg indices).
 # Returns number of results written.
 fn blockmap_query_point(bm, px, py, radius, out_buf, out_max) {
     var c1 = blockmap_cell_x(bm, px - radius);
@@ -726,14 +754,17 @@ fn blockmap_query_point(bm, px, py, radius, out_buf, out_max) {
     var out_count = 0;
     for (var r = r1; r <= r2; r += 1) {
         for (var c = c1; c <= c2; c += 1) {
-            var cell = blockmap_get_cell(bm, c, r);
-            if (cell != 0) {
-                var n = blockmap_cell_count(cell);
-                for (var i = 0; i < n; i += 1) {
-                    if (out_count < out_max) {
-                        store64(out_buf + out_count * 8, blockmap_cell_seg(cell, i));
-                        out_count += 1;
-                    }
+            # c,r are provably in-range after the clamps above (and the loops
+            # don't run when cols/rows is 0), so blockmap_get_cell would always
+            # return this exact pointer — inline it to drop the per-cell call,
+            # two redundant cols/rows reloads, four bounds checks, and the
+            # never-false cell != 0 guard.
+            var cell = bm + BM_DATA + (r * cols + c) * BM_CELL_STRIDE;
+            var n = blockmap_cell_count(cell);
+            for (var i = 0; i < n; i += 1) {
+                if (out_count < out_max) {
+                    store64(out_buf + out_count * 8, blockmap_cell_seg(cell, i));
+                    out_count += 1;
                 }
             }
         }
@@ -829,20 +860,30 @@ fn frustum_test_aabb(fr, box) {
     var rnx = asr(load64(fr + FR_RIGHT_NX), 4);
     var rny = asr(load64(fr + FR_RIGHT_NY), 4);
 
-    # Test left plane: if all 4 corners have negative dot product, reject
+    # Test left plane: if all 4 corners have negative dot product, reject.
+    # Each plane has only 4 distinct corner products (lx/rx x-normal, ty/by
+    # y-normal) shared across the 4 corners -- hoist them (8 fx_mul -> 4).
+    var lx_lnx = fx_mul(lx, lnx);
+    var rx_lnx = fx_mul(rx, lnx);
+    var ty_lny = fx_mul(ty, lny);
+    var by_lny = fx_mul(by, lny);
     var l_fail = 0;
-    if (fx_mul(lx, lnx) + fx_mul(ty, lny) < 0) { l_fail += 1; }
-    if (fx_mul(rx, lnx) + fx_mul(ty, lny) < 0) { l_fail += 1; }
-    if (fx_mul(lx, lnx) + fx_mul(by, lny) < 0) { l_fail += 1; }
-    if (fx_mul(rx, lnx) + fx_mul(by, lny) < 0) { l_fail += 1; }
+    if (lx_lnx + ty_lny < 0) { l_fail += 1; }
+    if (rx_lnx + ty_lny < 0) { l_fail += 1; }
+    if (lx_lnx + by_lny < 0) { l_fail += 1; }
+    if (rx_lnx + by_lny < 0) { l_fail += 1; }
     if (l_fail == 4) { return 0; }
 
-    # Test right plane
+    # Test right plane (same 4-distinct-products structure).
+    var lx_rnx = fx_mul(lx, rnx);
+    var rx_rnx = fx_mul(rx, rnx);
+    var ty_rny = fx_mul(ty, rny);
+    var by_rny = fx_mul(by, rny);
     var r_fail = 0;
-    if (fx_mul(lx, rnx) + fx_mul(ty, rny) < 0) { r_fail += 1; }
-    if (fx_mul(rx, rnx) + fx_mul(ty, rny) < 0) { r_fail += 1; }
-    if (fx_mul(lx, rnx) + fx_mul(by, rny) < 0) { r_fail += 1; }
-    if (fx_mul(rx, rnx) + fx_mul(by, rny) < 0) { r_fail += 1; }
+    if (lx_rnx + ty_rny < 0) { r_fail += 1; }
+    if (rx_rnx + ty_rny < 0) { r_fail += 1; }
+    if (lx_rnx + by_rny < 0) { r_fail += 1; }
+    if (rx_rnx + by_rny < 0) { r_fail += 1; }
     if (r_fail == 4) { return 0; }
 
     return 1;

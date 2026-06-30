@@ -50,7 +50,12 @@ fn bsp_nearest_seg(px, py, segs, seg_count) {
     if (seg_count == 0) { return -1; }
 
     var best_idx = 0;
-    var best_dist = 2147483647;
+    # Seed with INT64_MAX, not 2147483647 (=2^31-1, ~32768.0 world units):
+    # bsp_point_seg_dist returns _approx_dist values up to ~1.5*2^32 for
+    # 16.16 coords, so a 2^31 seed left far (cross-map) segments never
+    # beating it — best_idx stuck at 0, returning the wrong segment. FX_MAX
+    # is also 2147483647, so it can't serve as the sentinel here.
+    var best_dist = 9223372036854775807;
 
     for (var i = 0; i < seg_count; i += 1) {
         var base = segs + i * 32;
@@ -79,8 +84,9 @@ fn bsp_nearest_seg(px, py, segs, seg_count) {
 fn bsp_count_in_aabb(box, entities, entity_count) {
     var count = 0;
     for (var i = 0; i < entity_count; i += 1) {
-        var ex = load64(entities + i * 16);
-        var ey = load64(entities + i * 16 + 8);
+        var ebase = entities + i * 16;
+        var ex = load64(ebase);
+        var ey = load64(ebase + 8);
         if (aabb_contains_point(box, ex, ey) == 1) {
             count += 1;
         }
