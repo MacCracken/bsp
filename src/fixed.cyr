@@ -12,9 +12,16 @@ enum BspFixed {
 }
 
 fn asr(val, bits) {
+    # Arithmetic (sign-preserving) right shift = FLOOR division by 2^bits, matching
+    # C's `>>` on signed ints (what DOOM's fixed-point + coord math assume). Cyrius
+    # `>>` is LOGICAL, so we synthesise it. The negative path previously returned
+    # `-(pos >> bits)` = round-toward-ZERO (e.g. asr(-3,1) → -1 instead of -2),
+    # which mis-wrapped flats by one texel over negative world coordinates and
+    # doubled the texel band straddling a world axis (audit RC-F2). Floor for a
+    # negative val = -ceil(|val|/2^bits) = -((|val| + 2^bits - 1) >> bits).
     if (val >= 0) { return val >> bits; }
-    var pos = -val;
-    return -(pos >> bits);
+    var pos = 0 - val;
+    return 0 - ((pos + (1 << bits) - 1) >> bits);
 }
 
 fn fx_from_int(n) { return n << 16; }

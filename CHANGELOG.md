@@ -5,7 +5,26 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - 2026-06-29
+## [1.2.1] - 2026-07-12 — `asr()` is now FLOOR, not round-toward-zero
+
+Bug-fix release. Reported by the cyrius-doom 0.33.6 audit (RC-F2). **The Cyrius pin
+is unchanged at 6.3.5.**
+
+### Fixed
+
+- **`asr(val, bits)` rounded negatives toward ZERO instead of flooring.** The old
+  negative path returned `-((-val) >> bits)`, so e.g. `asr(-3, 1)` gave `-1` where a
+  true arithmetic (sign-preserving) shift — what C's `>>` on signed ints does, and
+  what DOOM's fixed-point + coordinate math assume — floors to `-2`. Every downstream
+  `fx_to_int` / `fx_mul` on a negative operand inherited the truncation, which in the
+  cyrius-doom renderer mis-wrapped flats by one texel over **negative world
+  coordinates** and doubled the texel band straddling a world axis. Now floors:
+  negative `val` returns `-((|val| + 2^bits - 1) >> bits)`. Positive values are
+  unchanged, so all-positive call sites (the common case) are byte-identical.
+  +9 `asr`/`fx_to_int` floor assertions (`tests/bsp.tcyr`), suite **94 → 103**;
+  geometry tests (point-side, blockmap, frustum, traverse) unchanged and green.
+
+
 
 Deep audit / optimization release — the first **source-change** release since
 1.1.0 (1.1.1–1.1.5 were packaging and Cyrius-pin moves). **The Cyrius pin is
