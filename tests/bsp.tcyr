@@ -1,6 +1,8 @@
 # bsp.tcyr -- BSP library test suite
-# Run: cyrb test tests/bsp.tcyr
-#   or: cat tests/bsp.tcyr | cc2 > build/test && chmod +x build/test && ./build/test
+# Run: cyrius test tests/bsp.tcyr
+#
+# 168 assertions across 20 groups. `cyrb` and `cc2` used to be named here;
+# neither command has existed for several major versions.
 
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -258,31 +260,16 @@ fn main() {
     test_group("BSP traversal");
     # ============================================================
 
-    # Build a simple 2-node tree:
-    #   Node 0: vertical split at x=500, children: node 1 (right), ss 0 (left)
-    #   Node 1: vertical split at x=800, children: ss 1 (right), ss 2 (left)
+    # A 2-node tree with two vertical splits. The ROOT is the LAST node --
+    # bsp_find_subsector starts at node_count - 1 -- which is what makes the
+    # numbering read backwards at first glance:
+    #
+    #   node 1 (ROOT): split x=500  -> right: node 0     left: subsector 0
+    #   node 0:        split x=800  -> right: subsector 1  left: subsector 2
+    #
+    # so x<500 lands in ss 0, 500<x<800 in ss 2, and x>800 in ss 1.
+    # 0x8000 is BSP_NF_SUBSECTOR; the low 15 bits are the subsector index.
     var tree = alloc(BSP_NODE_SIZE * 2);
-    bsp_node_set(tree, 0, fx_from_int(500), fx_from_int(0), fx_from_int(0), fx_from_int(1));
-    bsp_node_set_children(tree, 0, 1, 0x8000);
-
-    bsp_node_set(tree, 1, fx_from_int(800), fx_from_int(0), fx_from_int(0), fx_from_int(1));
-    bsp_node_set_children(tree, 1, 0x8001, 0x8002);
-
-    # Root = node_count-1 = node 1 (split at x=800)
-    # Node 1 left child = 0x8002 (subsector 2), right child = 0x8001 (subsector 1)
-    # Node 0 is child of... wait, node 1's children are both subsectors.
-    # Node 0's right child = 1 (node 1), left child = 0x8000 (ss 0)
-    # But root is node 1, so node 0 is never the root!
-    # Fix: root should be node 0. Use node_count=2, root=node 1.
-    # Actually: tree traversal starts at node_count-1 = 1.
-    # So the tree as constructed has node 1 as root.
-    # Reinterpret: root splits at x=800
-    #   x<800 -> left -> ss 2
-    #   x>800 -> right -> ss 1
-    # Node 0 is orphaned! Need to fix tree structure.
-
-    # Rebuild: root=node 1 splits at x=500. children: node 0 (right), ss 0 (left)
-    #          node 0 splits at x=800. children: ss 1 (right), ss 2 (left)
     bsp_node_set(tree, 1, fx_from_int(500), fx_from_int(0), fx_from_int(0), fx_from_int(1));
     bsp_node_set_children(tree, 1, 0, 0x8000);
     bsp_node_set(tree, 0, fx_from_int(800), fx_from_int(0), fx_from_int(0), fx_from_int(1));

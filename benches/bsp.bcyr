@@ -1,6 +1,11 @@
 # bsp.bcyr -- BSP library benchmarks
-# Run: cyrb bench benches/bsp.bcyr
-#   or: cat benches/bsp.bcyr | cc2 > build/bench && chmod +x build/bench && ./build/bench
+# Run: cyrius bench benches/bsp.bcyr
+#   or: cyrius build benches/bsp.bcyr build/bench && ./build/bench
+#
+# The harness measures the clock-read floor (~1.3 us) and subtracts it from
+# every sample, so these are real per-op costs. Two of these benchmarks were
+# measuring the wrong thing until 1.2.3 -- see the notes on bench_check_sight
+# and bench_blockmap_query below before trusting a number from here.
 
 include "lib/string.cyr"
 include "lib/alloc.cyr"

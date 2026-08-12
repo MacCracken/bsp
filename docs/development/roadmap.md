@@ -1,15 +1,12 @@
 # BSP Development Roadmap
 
-> **v1.2.0** — 98,208 B standalone (cycc 6.3.5; −352 B vs 1.1.5).
-> Deep audit / optimization release — the first source-change release
-> since 1.1.0. 94/94 tests, 13/13 benches sub-μs, 25K fuzz gate + 300K
-> stress clean, and a 500K-iter differential harness proving every perf
-> hoist bit-identical to 1.1.5. Fixes the `bsp_nearest_seg` far-query
-> sentinel bug; instruction-count hoists in seg_intersect / ray_cast /
-> frustum_test_aabb / point_on_side; dead-load removal; `fx_div` branch
-> unify; first-ever `query.cyr` + `frustum.cyr` test coverage. Cyrius
-> pin unchanged at 6.3.5. 890-line `dist/bsp.cyr` bundle consumed by
-> **cyrius-doom 0.27.x**.
+> **v1.2.4** — 122,280 B standalone (cycc 6.5.20). 168/168 assertions across
+> 20 groups, 13/13 benches, 3 fuzz harnesses (25K standard gate, clean at 3M
+> stress), 0 undocumented public functions. 1,182-line `dist/bsp.cyr` bundle.
+>
+> 1.2.3 and 1.2.4 together were the **audit arc**: seven real defects, five of
+> them silent-wrong-answer rather than crash, plus two defects in the fuzz
+> harnesses that explain why the others survived so long.
 
 ## Completed
 
@@ -19,85 +16,54 @@
 | v1.1.0 | Signed-shift correctness audit (`asr()` for all signed shifts; `aabb_center_*` INT64_MAX wrap + `bsp_point_seg_dist` symmetry fixes) |
 | v1.1.1 | `[lib]` manifest section + `dist/bsp.cyr` single-file bundle (849 lines); cyrius-doom 0.26.0 is first downstream consumer |
 | v1.1.2 | Cyrius 5.5.0 → 5.5.2 (enum-constant fold; −1,448 B standalone) |
-| v1.1.3 | Cyrius 5.5.2 → 6.0.1 (covers v5.8.x language arc, v5.11.x annotation arc, v6.0.0 rename ceremony, v6.0.1 path hotfixes); manifest modernized (single `cyrius.cyml`, `${file:VERSION}`); +18,144 B growth-tax; bundle content byte-identical to 1.1.2 |
-| v1.1.4 / v1.1.5 | Cyrius pin lifts 6.0.1 → 6.2.11 → 6.3.5 (pure pin moves, no source changes; growth-tax 94,640 → 98,560 B) |
-| v1.2.0 | Deep audit / optimization release (source-change, pin held at 6.3.5): `bsp_nearest_seg` sentinel bug fix; instruction-count hoists (seg_intersect/ray_cast 12→6 asr, frustum_test_aabb 16→8 fx_mul, point_on_side 4→1 multiply); dead-load removal; `fx_div` branch unify; first `query.cyr`/`frustum.cyr` tests (79→94); 500K-iter differential proof; −352 B (98,560 → 98,208 B) |
+| v1.1.3 | Cyrius 5.5.2 → 6.0.1; manifest modernized (single `cyrius.cyml`, `${file:VERSION}`); +18,144 B growth-tax; bundle byte-identical to 1.1.2 |
+| v1.1.4 / v1.1.5 | Cyrius pin lifts 6.0.1 → 6.2.11 → 6.3.5 (pure pin moves; growth-tax 94,640 → 98,560 B) |
+| v1.2.0 | Deep audit / optimization release (pin held at 6.3.5): `bsp_nearest_seg` sentinel fix; instruction-count hoists; first `query.cyr`/`frustum.cyr` tests (79→94); 500K-iter differential proof; −352 B |
+| v1.2.1 | `asr()` corrected to FLOOR rather than round-toward-zero (cyrius-doom RC-F2) — negative world coordinates mis-wrapped flats by one texel |
+| v1.2.2 | Cyrius 6.3.5 → 6.5.19 (~130 patches). Fuzz harnesses renamed `*.cyr` → `*.fcyr` so `cyrius fuzz` could discover them at all; `atomic`/`result` declared in `[deps] stdlib`. +19,936 B growth-tax, the project's largest |
+| v1.2.3 | Cyrius 6.5.20 (byte-identical build); `asr()` became a one-line alias for native `>>>`; **full audit** — `aabb_init` ±2^31 sentinels, `bsp_find_subsector` hang/OOB/negative-child, `blockmap_cell_seg` SIGSEGV, blockmap silent drops, negative-count queries; fuzz PRNG correlation + `fuzz_aabb` blind spot; docs 33 undocumented → 0; 103 → 136 assertions |
+| v1.2.4 | **`fx_div` rewritten** — was wrong by >1 % on 95 % of divisions with a dividend past 32767 (worst case 241×), with a sign-inverting sentinel; plus blockmap live-count/dimension guards and the above-16-bit child hole. 136 → 168 assertions |
 
-## v1.2.x — Language-adoption arc
+## Notes on the abandoned 1.2.x language-adoption plan
 
-**Theme** — mirror cyrius-doom's 0.27.x adoption sweep at the
-bsp public-surface boundary. The 5.8.x → 6.0.1 language gains
-(sum types, `Result<T, E>`, `?`, exhaustive match, parse-only
-return-type annotations) are now mature in stdlib. bsp's
-all-pure-functions / no-globals / no-IO design makes it a
-particularly clean canvas for the adoption sweep — there's no
-state to thread, so `Result` adoption is purely about contract
-clarity at the API boundary.
+An earlier version of this roadmap slotted v1.2.1–v1.2.3 as a language-adoption
+sweep: `: i64` return annotations, `Result<T, E>` variants for fallible queries,
+and a `test_each` table-driven test refactor. **None of that shipped.** Those
+patch levels went to correctness instead — the RC-F2 `asr` fix, a two-band
+toolchain catch-up, and the audit. The ideas are still open; they are re-slotted
+below rather than left describing releases that contain something else.
 
-> **Note** — v1.2.0 shipped as a deep audit / optimization release
-> (correctness + instruction-count perf) rather than the annotation
-> sweep originally slotted here. The language-adoption items below
-> shift one patch level: annotations → 1.2.1, `Result` → 1.2.2,
-> test-surface refactor → 1.2.3.
+## v1.3.x — Contract clarity (unscheduled)
 
-### v1.2.1 — `: i64` return annotations on public surface
-
-Mechanical sweep. Same shape as vani 0.9.3's annotation pass.
-Parse-only, zero-codegen-change, ABI-identical. Documents the
-return contract inline; sets up for v1.2.1's `Result` adoption.
-
-| # | Item | Surface | Detail |
-|---|------|---------|--------|
-| 1 | `: i64` annotation on every `bsp_*` public fn | all 9 modules | Mechanical sweep; verify byte-identical codegen |
-| 2 | Re-bench standalone bsp under the annotation pass | benches/ | Confirm variance-level deltas only |
-| 3 | Regen `dist/bsp.cyr` with annotated signatures | dist/ | Bundle line count rises ~5 % (annotation suffixes) |
-
-### v1.2.2 — `Result<T, E>` for fallible queries
-
-Adopt the v5.8.28 `lib/result.cyr` carve-out at the small
-fallible-query surface. bsp's pure-geometry primitives mostly
-can't fail (`aabb_contains` is total; `fx_mul` saturates;
-`bsp_point_on_side` is total), but a handful of queries DO have
-a "couldn't find it" / "out of range" outcome currently encoded
-as sentinel returns:
-
-| # | Item | Module | Detail |
-|---|------|--------|--------|
-| 1 | `bsp_find_subsector_r` returns `Result<u32, BspError>` | traverse.cyr | `Err(BspOutOfBounds)` for point outside any subsector |
-| 2 | `bsp_blockmap_query_r` returns `Result<count, BspError>` | blockmap.cyr | `Err(BspBlockmapCellOutOfRange)` for queries outside grid |
-| 3 | `bsp_nearest_seg_r` returns `Result<SegRef, BspError>` | query.cyr | `Err(BspNoSegs)` when subsector is empty |
-| 4 | Existing `i64`-return variants preserved per SemVer | all | Additive only — `_r` suffix on Result variants |
-
-### v1.2.3 — Test surface refactor onto `lib/test.cyr`
-
-Adopt the v5.7.43 `test_each(cases, fn)` helper. Current
-`tests/bsp.tcyr` is ~79 hand-rolled asserts grouped by 14
-sections. Table-driven cuts the boilerplate and makes property
-extension trivial.
+The audit surfaced a pile of sentinel-encoded failure modes that a real result
+type would make unmissable. This is now motivated by evidence rather than by
+mirroring another project's sweep.
 
 | # | Item | Detail |
 |---|------|--------|
-| 1 | Add `"test"` to bsp's stdlib pin | One-line manifest |
-| 2 | Convert fixed-point / AABB / intersect asserts → `test_each` | ~40 asserts collapsed |
-| 3 | Extend corpus once boilerplate drops | Add edge cases per group (overflow, sub-precision, zero-extent) |
+| 1 | `Result`-shaped variants for the fallible queries | `bsp_find_subsector`, `bsp_nearest_seg`, `blockmap_query_point` all encode failure as a sentinel (`0`, `-1`) that is indistinguishable from a valid answer. Additive `_r` variants only — the `i64` forms stay, per SemVer |
+| 2 | `fx_div` saturation is unsignalled | `±FX_MAX` means both "divide by zero" and "quotient out of range" and "the quotient really is FX_MAX". A caller cannot tell them apart |
+| 3 | `: i64` return annotations on the public surface | Parse-only, ABI-identical; verify byte-identical codegen |
+| 4 | Prefix consistency | `aabb_*`, `frustum_*`, `blockmap_*`, `fx_*` and `asr` lack the `bsp_` prefix. Renaming is a **major** bump — not worth it alone, but worth bundling if a 2.0 ever happens |
 
-## v1.3.x — Performance recovery (gated on Cyrius O3)
+## v1.4.x — Performance recovery (gated on Cyrius O3)
 
-Same gate as cyrius-doom's 0.29.x. Currently bsp's release binary
-flags ~65 KB of unreachable code as NOPed (via CYRIUS_DCE=1)
-— the file size is unchanged because DCE NOPs in-place. Cyrius
-O3 (IR-driven real DCE + const-prop + dead-store-elim) will
-genuinely shrink the binary.
+`CYRIUS_DCE=1` currently NOPs ~82 KB of unreachable code in place, so the file
+size is unchanged. Cyrius O3 (IR-driven real DCE + const-prop + dead-store
+elimination) would genuinely shrink it.
 
 | # | Item | Status | Detail |
 |---|------|--------|--------|
-| 1 | Wait for **Cyrius O3** real DCE | Upstream | Recovers ~65 KB out of current 94,640 B standalone |
+| 1 | Wait for **Cyrius O3** real DCE | Upstream | ~82 KB of the 122,280 B standalone is unreachable prelude |
 | 2 | Re-bench under O2/O3/O4 phases | Pending | bench-history per upstream phase landing |
+| 3 | `bsp_count_in_aabb` reloads all four box fields per entity | Open | Found in the 1.2.3 audit, not yet actioned — hoist the bounds out of the loop |
 
 ## Future
 
 | Item | Detail |
 |------|--------|
-| 3D BSP support | Currently 2D only (DOOM-style). 3D adds Z-plane partition for true 3D queries. |
-| Quake-style BSP loader | Read .bsp file format directly (BSP1/BSP2/BSP3) — would let bsp consume id-Software-format static maps directly |
+| `bsp_bbox_visible` | Currently a placeholder that always returns 1. Either implement it against the frustum or remove it in a major bump — a permanently-true culling test is a trap |
+| Blockmap cell capacity | `BM_CELL_MAX_SEGS` = 16 is a hard cap; dense geometry hits it with valid input. 1.2.4 made the drops *reportable*, not absent. Chained or variable-width cells would remove the ceiling |
+| 3D BSP support | Currently 2D only (DOOM-style). 3D adds Z-plane partition for true 3D queries |
+| Quake-style BSP loader | Read .bsp format directly (BSP1/BSP2/BSP3) — would let bsp consume id-format static maps |
 | Dynamic BSP rebuild | Currently static. Incremental rebuild for destructible-geometry consumers (kiran, phylax) |

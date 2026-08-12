@@ -59,7 +59,7 @@ jobs:
           echo "bsp: $(wc -c < build/bsp) bytes"
 
   test:
-    name: Test (103 assertions)
+    name: Test (168 assertions)
     needs: [build]
     runs-on: ubuntu-latest
     steps:
@@ -99,7 +99,7 @@ jobs:
       # twice over: the pipe discarded cyrius's exit status, and "0 failed"
       # is a SUBSTRING of "10 failed" — so a run reporting
       # "0 passed, 10 failed" matched the guard and the job went green.
-      # Reachable at 10/20/.../100 failures within today's 103 assertions.
+      # Reachable at 10/20/.../100 failures within today's 168 assertions.
       - name: Run tests
         run: |
           ec=0
