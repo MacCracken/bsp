@@ -21,6 +21,7 @@ var _b_tree = 0;
 var _b_bm = 0;
 var _b_walls = 0;
 var _b_flags = 0;
+var _b_results = 0;
 
 fn bench_setup() {
     # AABB boxes
@@ -50,6 +51,10 @@ fn bench_setup() {
         var y2 = fx_from_int(i * 25 + 40);
         blockmap_insert_seg(_b_bm, i, x1, y1, x2, y2);
     }
+
+    # Query output buffer. Allocated HERE, not inside bench_blockmap_query --
+    # an alloc() in the timed body measures the allocator, not the query.
+    _b_results = alloc(128);
 
     # Walls for line-of-sight: 8 walls
     _b_walls = alloc(32 * 8);
@@ -155,8 +160,7 @@ fn bench_find_subsector() {
 # ================================================================
 
 fn bench_blockmap_query() {
-    var results = alloc(128);
-    blockmap_query_point(_b_bm, fx_from_int(150), fx_from_int(100), fx_from_int(50), results, 16);
+    blockmap_query_point(_b_bm, fx_from_int(150), fx_from_int(100), fx_from_int(50), _b_results, 16);
     return 0;
 }
 
@@ -165,9 +169,14 @@ fn bench_blockmap_query() {
 # ================================================================
 
 fn bench_check_sight() {
+    # The ray must NOT be blocked, or the loop returns at the first wall and
+    # this measures ONE iteration while claiming eight. The walls are vertical
+    # lines at x = 50, 150 .. 750; a ray from x=0 to x=40 at y=500 reaches none
+    # of them, so all 8 are tested -- the true worst case, and what the name
+    # says. Through 1.2.3 this ran from x=0 to x=1000 and wall 0 blocked it.
     bsp_check_sight(
     fx_from_int(0), fx_from_int(500),
-    fx_from_int(1000), fx_from_int(500),
+    fx_from_int(40), fx_from_int(500),
     _b_walls, 8, _b_flags);
     return 0;
 }

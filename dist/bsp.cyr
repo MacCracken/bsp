@@ -331,6 +331,28 @@ fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
     return _seg_check(denom, t1_num, t2_num);
 }
 
+# Internal: bsp_seg_intersect with the A-segment deltas ALREADY pre-shifted, so
+# a caller testing many B-segments against ONE fixed A-segment can hoist them
+# out of its loop. bsp_check_sight is exactly that shape.
+#
+# Value-identical to bsp_seg_intersect: same operands, same operation order.
+# The two bodies are duplicated deliberately -- routing bsp_seg_intersect
+# through this helper costs the primitive a call it cannot afford
+# (seg_intersect_hit 52 -> 59 ns, miss 39 -> 46 ns, measured). Any change to
+# one MUST be mirrored in the other; the whole-API differential probe exercises
+# both against a reference build and will catch divergence.
+fn _seg_intersect_pre(ax1, ay1, dax, day, bx1, by1, bx2, by2) {
+    var dbx = asr(bx2 - bx1, 8);
+    var dby = asr(by2 - by1, 8);
+    var denom = dax * dby - day * dbx;
+    if (denom == 0) { return 0; }
+    var abx = asr(bx1 - ax1, 8);
+    var aby = asr(by1 - ay1, 8);
+    var t1_num = abx * dby - aby * dbx;
+    var t2_num = abx * day - aby * dax;
+    return _seg_check(denom, t1_num, t2_num);
+}
+
 # ================================================================
 # Line-of-sight test
 # ================================================================
@@ -344,21 +366,11 @@ fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
 #
 # Returns 1 if visible, 0 if blocked.
 fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
-    # MEASURED AND REJECTED (1.2.3 audit): the sight ray is fixed across the
-    # loop, so `asr(tx - sx, 8)` / `asr(ty - sy, 8)` are loop-invariant and
-    # bsp_seg_intersect recomputes them once per wall — 2 subs + 2 shifts of
-    # provably wasted work per iteration. Hoisting them into a pre-shifted
-    # helper was implemented and benchmarked BOTH ways:
-    #   - helper shared with bsp_seg_intersect (which then delegates):
-    #     check_sight 55 -> 50 ns, but seg_intersect_hit 53 -> 59 ns and
-    #     seg_intersect_miss 39 -> 46 ns. The added call costs the core
-    #     primitive more than the loop saves.
-    #   - helper used only here, bsp_seg_intersect kept inline: primitive back
-    #     to 53/39, but check_sight measured 53 ns — no better than baseline,
-    #     and the division-free intersection math is now duplicated.
-    # 4 wasted ops are real but invisible against ~30 ops of per-wall work, and
-    # the loop early-returns on the first blocker. Not worth a call penalty on
-    # the primitive or a second copy of correctness-critical math.
+    # The sight ray is fixed across the loop, so its pre-shifted deltas are
+    # loop-invariant; bsp_seg_intersect recomputed them once PER WALL.
+    var dax = asr(tx - sx, 8);
+    var day = asr(ty - sy, 8);
+
     for (var i = 0; i < wall_count; i += 1) {
         # Skip two-sided walls (they don't block sight)
         if (load64(twosided_flags + i * 8) != 0) { continue; }
@@ -369,7 +381,7 @@ fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
         var wx2 = load64(base + 16);
         var wy2 = load64(base + 24);
 
-        if (bsp_seg_intersect(sx, sy, tx, ty, wx1, wy1, wx2, wy2) == 1) {
+        if (_seg_intersect_pre(sx, sy, dax, day, wx1, wy1, wx2, wy2) == 1) {
             return 0;
         }
     }

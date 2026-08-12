@@ -137,30 +137,50 @@ caught the bounding-box bug could not reach it and would not have asserted it.
   nonzero width`, on all three seeds tried) and **GREEN on 1.2.3**. The old
   harness was green on both.
 
+### Fixed — two benchmarks were measuring the wrong thing
+
+Both were found while re-checking a performance claim, and both had been
+producing numbers quoted in previous CHANGELOG entries.
+
+- **`check_sight_8walls` measured ONE wall, not eight.** The walls are vertical
+  lines at x = 50, 150 … 750 and the ray ran horizontally at y = 500 from x = 0
+  to x = 1000 — so wall 0 blocked it and `bsp_check_sight` returned at the first
+  iteration. The ray now stops at x = 40, reaching no wall, so all 8 are tested:
+  the true worst case the name claims. **The honest number is ~290 ns, not the
+  ~51 ns previously reported.**
+- **`bench_blockmap_query` called `alloc(128)` inside the timed body**, so it
+  measured the allocator on every iteration. The buffer is now allocated once in
+  `bench_setup`. **The honest number is ~165 ns, not the ~305 ns previously
+  reported.**
+
 ### Changed — performance
 
-- **`blockmap_query_point`: 305 ns → 252 ns (−17 %).** Two changes, both
-  provably result-neutral. The inner loop called `blockmap_cell_count` and
-  `blockmap_cell_seg` per segment, but `cell` is provably non-zero there and
-  `i < n <= BM_CELL_MAX_SEGS`, so their guards could never fire — the loads are
-  now direct, dropping two calls and five branches per segment. And on reaching
-  `out_max` the loop kept scanning every remaining cell to store nothing; it now
-  returns immediately, which cannot change the returned count.
+- **`bsp_check_sight`: ~290 ns → ~245 ns (−15 %).** The sight ray is fixed
+  across the loop, so its pre-shifted deltas are loop-invariant, but
+  `bsp_seg_intersect` recomputed `asr(tx - sx, 8)` / `asr(ty - sy, 8)` once per
+  wall. They are now hoisted and passed to an internal `_seg_intersect_pre`.
+  `bsp_seg_intersect` deliberately keeps its own inline copy of the body rather
+  than delegating — routing it through the helper costs the primitive a call it
+  cannot afford (seg_intersect_hit 52 → 59 ns, miss 39 → 46 ns, measured).
 
-### Measured and rejected
+  **This reverses a call made earlier in this same release.** The hoist was
+  first implemented, measured as worthless, and reverted — on the broken
+  1-wall benchmark above, where hoisting work out of a loop that runs once
+  obviously saves nothing. Re-measured on the corrected 8-wall benchmark it is
+  a clear win. Recorded because the failure mode generalises: *an optimisation
+  measured against a broken benchmark was rejected for the wrong reason.*
 
-- **Hoisting the loop-invariant ray deltas out of `bsp_check_sight`.** The sight
-  ray is fixed across the loop, so `bsp_seg_intersect` recomputes
-  `asr(tx - sx, 8)` / `asr(ty - sy, 8)` once **per wall** — 2 subs + 2 shifts of
-  provably wasted work per iteration. Implemented and benchmarked both ways:
-  sharing a pre-shifted helper (so `bsp_seg_intersect` delegates) gave
-  check_sight 55 → 50 ns but cost the core primitive
-  **seg_intersect_hit 53 → 59 ns, seg_intersect_miss 39 → 46 ns**; keeping
-  `bsp_seg_intersect` inline restored the primitive but left check_sight at
-  53 ns — **no better than baseline**, with the division-free intersection math
-  now duplicated. 4 wasted ops are real but invisible against ~30 ops of
-  per-wall work, and the loop early-returns on the first blocker. Reverted; the
-  measurement is recorded in the source so it is not re-raised.
+- **`blockmap_query_point`: no measurable change** — reported honestly, since
+  the earlier "305 → 252 ns (−17 %)" claim in this release was an artifact of
+  the allocator being inside the timed body. Measured pre/post on the corrected
+  benchmark: **165–175 ns before, 165–169 ns after.** The change is kept as an
+  instruction-count reduction with no regression, not as a speedup: the inner
+  loop called `blockmap_cell_count` and `blockmap_cell_seg` per segment, but
+  `cell` is provably non-zero there and `i < n <= BM_CELL_MAX_SEGS`, so their
+  guards could never fire — the loads are now direct, dropping two calls and
+  five branches per segment. And on reaching `out_max` the loop kept scanning
+  every remaining cell to store nothing; it now returns immediately, which
+  cannot change the returned count.
 
 ### Added — documentation
 
@@ -270,12 +290,12 @@ the 6.4.x/6.5.x band in 1.2.2.
   The deep runs earned their keep: at 200K they initially failed on every seed,
   correctly reporting that the first sentinel magnitude tried (2^61) did not
   dominate the coordinate band being generated.
-- **Benches**: 13/13. `blockmap_query` **305 → 252 ns (−17 %)**, the one
-  repeatable performance change in this release. `fx_mul` 11 ns,
-  `find_subsector_3node` 45 ns (unchanged despite the new bounds checks),
-  `seg_intersect_hit` 52 ns, `check_sight_8walls` 51 ns. Everything except
-  blockmap_query is inside run-to-run noise and should be read as *no
-  regression*, not as a win.
+- **Benches**: 13/13, and **two of them were fixed before being trusted** (see
+  above). `check_sight_8walls` **~290 → ~245 ns (−15 %)** is the one repeatable
+  performance win. `blockmap_query` ~165 ns before and after — no change.
+  `fx_mul` 11 ns, `find_subsector_3node` 45 ns (unchanged despite the new
+  bounds checks), `seg_intersect_hit` 52 ns. Everything except check_sight is
+  inside run-to-run noise and should be read as *no regression*, not as a win.
 - **`cyrius audit`**: fmt clean, lint clean (0 warnings, 0 untracked deferrals),
   **docs `ok: docs complete`**, tests 130/0, bench 1/0. **`cyrius vet`: 8 deps,
   0 untrusted, 0 missing.** `cyrius check dist/bsp.cyr`: ok.
