@@ -34,8 +34,24 @@
 
 ## Build
 
+Requires the Cyrius toolchain pinned in `cyrius.cyml` (currently 6.5.19).
+
+```sh
+cyrius build src/lib.cyr build/bsp
+cyrius test tests/bsp.tcyr
+cyrius fuzz
 ```
-cyrb build
+
+## Use It
+
+Either vendor the single-file bundle `dist/bsp.cyr`, or declare a git
+dependency in your own `cyrius.cyml`:
+
+```toml
+[deps.bsp]
+git = "https://github.com/MacCracken/bsp"
+tag = "1.2.2"
+modules = ["dist/bsp.cyr"]
 ```
 
 ## License

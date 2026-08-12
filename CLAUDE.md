@@ -6,47 +6,35 @@
 
 - **Type**: Shared library — geometry foundation for games, compositors, spatial systems
 - **License**: GPL-3.0-only
-- **Language**: Cyrius (native, compiled via cycc 6.3.5)
+- **Language**: Cyrius (native, compiled via cycc 6.5.19)
 - **Version**: SemVer, single source of truth at `VERSION` (referenced
   via `version = "${file:VERSION}"` in `cyrius.cyml`)
-- **Binary contribution**: ~2KB compiled (890 lines across 9 modules
+- **Binary contribution**: ~2KB compiled (871 lines across 8 modules
   in `dist/bsp.cyr`)
-- **Status**: v1.2.0 — STABLE on Cyrius 6.3.5. 94 tests passing,
-  13 benchmarks sub-microsecond, 3 fuzz harnesses (25K-iter standard
-  gate). 1.2.0 is a deep audit / optimization release — the first
-  SOURCE-change release since 1.1.0 (1.1.1–1.1.5 were packaging/pin
-  moves). Cyrius pin unchanged at 6.3.5. Applies 12 audited, adversarially
-  verified findings: fixes the `bsp_nearest_seg` far-query sentinel bug
-  (2³¹−1 → INT64_MAX — cross-map queries silently returned segment 0);
-  instruction-count perf hoists in `bsp_seg_intersect` / `bsp_ray_cast`
-  (12 `asr` → 6 each), `frustum_test_aabb` (16 `fx_mul` → 8), and
-  `bsp_point_on_side` (one node-base multiply, not four); removes dead
-  loads in `bsp_bbox_visible`; unifies `fx_div`'s two scale-down branches;
-  adds the previously-missing `query.cyr` / `frustum.cyr` test groups
-  (79 → 94). Every perf change proven bit-identical to 1.1.5 over a
-  500K-iter differential harness. Standalone binary 98,560 → 98,208 B
-  (−352 B, −0.36 %) — a real shrink, not a pin-move growth-tax.
-  1.1.5 bumped the Cyrius pin 6.2.11 → 6.3.5 (pure pin move; +952 B
-  growth-tax, 97,608 → 98,560 B; cleared the toolchain-drift warning).
-  1.1.4 bumps the Cyrius pin 6.0.1 → 6.2.11 (crosses the 6.1.0 and
-  6.2.0 minor bands plus the 6.2.x patch line; pure pin move, no
-  source changes; +2,968 B standalone binary growth-tax,
-  94,640 → 97,608 B, from prelude/codegen widening).
-  1.1.3 bumped the Cyrius pin to 6.0.1 (covers v5.8.x sum-types /
-  `Result<T,E>` / `?` / exhaustive-match, v5.11.x annotation arc,
-  v5.11.65 CVE-05 fix in the compiler, v6.0.0 `cyrc → cybs` +
-  `cc5 → cycc` rename ceremony, v6.0.1 stdlib-path hotfixes;
-  +18,144 B standalone binary growth-tax from the v5.8.x sum-type
-  emit + v5.11.x annotation rt-table; no source changes).
-  Legacy `cyrius.toml` removed — `cyrius.cyml` is the single
-  manifest, matching patra/vani/sakshi/mihi convention.
-  1.1.2 bumped to 5.5.2 (−1,448 B from enum-constant fold). 1.1.1
-  added `[lib]` manifest section and `dist/bsp.cyr` single-file
-  bundle — first downstream consumer is cyrius-doom 0.26.1
-  (swaps its ad-hoc BSP traversal for bsp library primitives).
-  1.1.0 landed the signed-shift correctness audit (`asr()` for all
-  signed shifts; fixed `aabb_center_*` INT64_MAX wrap and
-  `bsp_point_seg_dist` symmetry on sub-precision segments).
+- **Status**: v1.2.2 — STABLE on Cyrius 6.5.19. 103 tests passing,
+  13 benchmarks (10–311 ns/op), 3 fuzz harnesses (25K-iter standard
+  gate). 1.2.2 is a **toolchain catch-up** release: the pin moves
+  6.3.5 → 6.5.19, crossing the 6.4.x (86 patches) and 6.5.x (19
+  patches) bands. No geometry source changed; behaviour proven
+  identical to 6.3.5 over a 3M-iteration cross-toolchain differential
+  probe (6 seeds, every public function, zero divergence). Standalone
+  binary 98,240 → **118,176 B (+19,936 B, +20.3 %)** — the largest
+  growth-tax this project has taken, entirely prelude/stdlib widening
+  (dead-code accounting 384 fns/69,598 B → 433 fns/81,549 B) plus
+  +896 B for the 6.3.12 W^X split into two `PT_LOAD` segments.
+  Also: fuzz harnesses renamed `*.cyr` → `*.fcyr` so
+  `cyrius fuzz` discovers them (it never had — CI now runs them);
+  `atomic` + `result` declared in `[deps] stdlib` (they were
+  transitive-only and so never re-vendored by `cyrius lib sync`);
+  `cyrius vet` phantom-dep and stale-doc fixes.
+
+  **Release lineage** (detail in CHANGELOG.md): 1.2.1 fixed `asr()` to
+  FLOOR rather than round-toward-zero (cyrius-doom RC-F2). 1.2.0 was
+  the deep audit / optimization release — `bsp_nearest_seg` far-query
+  sentinel fix plus instruction-count hoists, 79 → 94 assertions.
+  1.1.1–1.1.5 were packaging and pin moves; 1.1.1 added the `[lib]`
+  section and the `dist/bsp.cyr` bundle. 1.1.0 landed the signed-shift
+  correctness audit.
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Shared crates**: [shared-crates.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/shared-crates.md)
@@ -103,8 +91,8 @@ src/
 1. Work phase — implement, fix, optimize
 2. Build check: `cyrius build src/lib.cyr build/bsp`
 3. Run tests: `cyrius test tests/bsp.tcyr` — assert "0 failed"
-4. Run benchmarks: `cyrius bench benches/bsp.bcyr` — all sub-microsecond
-5. Run fuzz: `cyrius fuzz` — fuzz/fuzz_intersect.cyr, fuzz/fuzz_aabb.cyr, fuzz/fuzz_blockmap.cyr
+4. Run benchmarks: `cyrius bench benches/bsp.bcyr` — see the ns/op note below
+5. Run fuzz: `cyrius fuzz` — auto-discovers fuzz/*.fcyr (intersect, aabb, blockmap)
 6. Review — correctness (algebraic properties), performance (ns/op), robustness (no crashes on random input)
 7. Documentation — CHANGELOG, roadmap
 8. Version check — VERSION, cyrius.cyml, dist/bsp.cyr header all in sync
@@ -129,7 +117,20 @@ src/
 - **Guard all divisions.** Check denominator AND denominator-after-scaling for zero.
 - **Property tests > value tests.** "distance is always >= 0" catches more bugs than "distance(5,5) == 7".
 - **No globals.** Every function takes its data as arguments. The consumer owns the memory.
-- **Sakshi available.** `lib/sakshi.cyr` included for consumer-side tracing, not used by library itself.
+- **Benchmarks mean something again (6.5.19).** The bench harness now measures
+  the clock-read floor (~1.3 µs) and subtracts it from every sample, so per-op
+  averages are real: 10–311 ns/op instead of a uniform ~1.3 µs of timer
+  overhead. Pre-1.2.2 guidance said perf wins could only be read as
+  instruction-count/binary-size deltas — that is obsolete. Compare ns/op
+  directly, but still confirm a win with a differential harness.
+- **Measure binary size in a FRESH tree, one build per tree.** `cyrius build`
+  auto-vendors the stdlib into `lib/` (gitignored), and the snapshot it picks
+  comes from the **`cyrius =` pin in `cyrius.cyml`** — *not* from which `cycc`
+  you run. A second build in a tree that already has `lib/` silently reuses the
+  first vintage. Swapping compilers inside one working tree therefore measures a
+  mixed configuration that never ships: doing that here produced a −5,664 B
+  "shrink" when the honest number was +19,936 B. Use
+  `git archive <tag> | tar -x -C <clean-dir>` and build once.
 
 ## Build & Test Commands
 
@@ -141,19 +142,31 @@ cyrius build src/lib.cyr build/bsp
 # unreachable code becomes inert. Used by release.yml.
 CYRIUS_DCE=1 cyrius build src/lib.cyr build/bsp
 
-# Test (74 assertions; 79 with 1.1.0+ signed-shift regression group)
-cyrius test
+# Test (103 assertions across 17 groups)
+cyrius test tests/bsp.tcyr
 
-# Benchmark (13 ops, all sub-microsecond)
+# Benchmark (13 ops, 10–311 ns/op; harness subtracts the ~1.3us timer floor)
 cyrius build benches/bsp.bcyr build/bench && ./build/bench
 
-# Fuzz (3 harnesses: intersect, aabb, blockmap)
-cyrius build fuzz/fuzz_intersect.cyr build/fuzz_i && ./build/fuzz_i
+# Fuzz — all 3 harnesses, auto-discovered from fuzz/*.fcyr
+cyrius fuzz
+# Or one harness directly, with explicit iters + seed:
+cyrius build fuzz/fuzz_intersect.fcyr build/fuzz_i && ./build/fuzz_i 200000 12345
+
+# Refresh the vendored stdlib in lib/ after a pin bump (lib/ is gitignored)
+cyrius lib sync
+
+# Regenerate the consumer bundle after ANY src change or version bump.
+# Writes dist/bsp.cyr (stamped from VERSION) + dist/bsp.deps (stdlib sidecar).
+cyrius distlib
+
+# Whole-project gate: fmt + lint + docs + tests + bench
+cyrius audit
 
 # Consumer usage: vendor dist/bsp.cyr, or declare a cyrius.cyml git dep:
 # [deps.bsp]
 # git = "https://github.com/MacCracken/bsp"
-# tag = "1.2.0"
+# tag = "1.2.2"
 # modules = ["dist/bsp.cyr"]
 ```
 
@@ -176,15 +189,24 @@ Root files (required):
   CODE_OF_CONDUCT.md, LICENSE, VERSION, cyrius.cyml
 
 tests/:
-  bsp.tcyr — 74 assertions across 15 test groups
+  bsp.tcyr — 103 assertions across 17 test groups
 
 benches/:
   bsp.bcyr — 13 benchmarks (fx_mul through check_sight)
 
 fuzz/:
-  fuzz_intersect.cyr — random segments, rays, distances (10K iters)
-  fuzz_aabb.cyr — random AABB operations (10K iters)
-  fuzz_blockmap.cyr — random insert + query (5K iters)
+  fuzz_intersect.fcyr — random segments, rays, distances (10K iters)
+  fuzz_aabb.fcyr — random AABB operations (10K iters)
+  fuzz_blockmap.fcyr — random insert + query (5K iters)
+  # .fcyr, not .cyr — that extension is what `cyrius fuzz` discovers.
+  # Each takes optional [iters] [seed] argv for stress runs.
+
+dist/ (generated by `cyrius distlib`):
+  bsp.cyr — single-file bundle consumers vendor (committed)
+  bsp.deps — sidecar 6.5.19 emits from `[deps] stdlib`; gitignored, NOT
+             shipped. Those are the harness deps, not the bundle's — the
+             bundle imports no stdlib, so shipping it would make a
+             consumer's `cyrius deps` demand leaves it doesn't need.
 ```
 
 ## CHANGELOG Format

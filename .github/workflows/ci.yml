@@ -59,7 +59,7 @@ jobs:
           echo "bsp: $(wc -c < build/bsp) bytes"
 
   test:
-    name: Test (79 assertions)
+    name: Test (103 assertions)
     needs: [build]
     runs-on: ubuntu-latest
     steps:
@@ -94,10 +94,38 @@ jobs:
       - name: Resolve dependencies
         run: cyrius deps
 
+      # Grade on the EXIT STATUS, not on grepping stdout. The old form
+      # (`cyrius test ... | tee out` then `grep "0 failed"`) was false-green
+      # twice over: the pipe discarded cyrius's exit status, and "0 failed"
+      # is a SUBSTRING of "10 failed" — so a run reporting
+      # "0 passed, 10 failed" matched the guard and the job went green.
+      # Reachable at 10/20/.../100 failures within today's 103 assertions.
       - name: Run tests
         run: |
-          cyrius test tests/bsp.tcyr 2>&1 | tee /tmp/test_output
-          tail -1 /tmp/test_output | grep "0 failed"
+          ec=0
+          cyrius test tests/bsp.tcyr > /tmp/test_output 2>&1 || ec=$?
+          cat /tmp/test_output
+          [ "$ec" -eq 0 ] || { echo "::error::cyrius test exited $ec"; exit 1; }
+          grep -Eq '(^| )0 failed' /tmp/test_output || { echo "::error::no clean summary line"; exit 1; }
+
+      # The 3 harnesses have always been the project's most productive gate
+      # (they found the SIGFPE, negative-width and divide-by-zero bugs that
+      # the unit tests missed) but CI never ran them — they were named
+      # fuzz/*.cyr, and `cyrius fuzz` only discovers fuzz/*.fcyr, so it
+      # reported "no harnesses found" and exited 0. Renamed in 1.2.2.
+      # `cyrius fuzz` derives its denominator from whatever it finds, so
+      # "1 passed, 0 failed" is a PASS even with 2 harnesses missing —
+      # hence the explicit floor of 3.
+      - name: Run fuzz harnesses
+        run: |
+          ec=0
+          cyrius fuzz > /tmp/fuzz_output 2>&1 || ec=$?
+          cat /tmp/fuzz_output
+          [ "$ec" -eq 0 ] || { echo "::error::cyrius fuzz exited $ec"; exit 1; }
+          grep -q "No fuzz harnesses found" /tmp/fuzz_output && { echo "::error::fuzz harnesses not discovered — are they named fuzz/*.fcyr?"; exit 1; }
+          grep -Eq '(^| )0 failed' /tmp/fuzz_output || { echo "::error::fuzz reported failures"; exit 1; }
+          PASSED=$(grep -oE '[0-9]+ passed' /tmp/fuzz_output | tail -1 | cut -d' ' -f1)
+          [ "${PASSED:-0}" -ge 3 ] || { echo "::error::expected >=3 fuzz harnesses, ran ${PASSED:-0}"; exit 1; }
 
   docs:
     name: Documentation
@@ -126,4 +154,9 @@ jobs:
           fi
           [ "$FILE_VERSION" = "$CYML_VERSION" ] || { echo "VERSION ($FILE_VERSION) != cyrius.cyml ($CYML_RAW)"; exit 1; }
           grep -q "$FILE_VERSION" CHANGELOG.md || { echo "FAIL: version not in CHANGELOG.md"; exit 1; }
-          echo "Version consistent: $FILE_VERSION (cyml: $CYML_RAW)"
+          # dist/bsp.cyr is what consumers actually vendor, so a stale bundle
+          # header is a shipped-wrong-version bug. `cyrius distlib` stamps this
+          # line from VERSION — a mismatch means the bundle was not regenerated.
+          DIST_VERSION=$(grep '^# Version: ' dist/bsp.cyr | head -1 | sed 's/# Version: //' | tr -d '[:space:]')
+          [ "$FILE_VERSION" = "$DIST_VERSION" ] || { echo "VERSION ($FILE_VERSION) != dist/bsp.cyr ($DIST_VERSION) — run 'cyrius distlib'"; exit 1; }
+          echo "Version consistent: $FILE_VERSION (cyml: $CYML_RAW, dist: $DIST_VERSION)"

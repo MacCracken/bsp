@@ -61,10 +61,15 @@ jobs:
           cyrius build src/lib.cyr build/bsp
           echo "bsp: $(wc -c < build/bsp) bytes (CYRIUS_DCE=1)"
 
+      # Grade on exit status; "0 failed" is a substring of "10 failed", and a
+      # pipe would discard cyrius's status. Same fix as ci.yml.
       - name: Test
         run: |
-          cyrius test tests/bsp.tcyr 2>&1 | tee /tmp/test_output
-          tail -1 /tmp/test_output | grep "0 failed"
+          ec=0
+          cyrius test tests/bsp.tcyr > /tmp/test_output 2>&1 || ec=$?
+          cat /tmp/test_output
+          [ "$ec" -eq 0 ] || { echo "::error::cyrius test exited $ec"; exit 1; }
+          grep -Eq '(^| )0 failed' /tmp/test_output || { echo "::error::no clean summary line"; exit 1; }
 
       - name: Create release
         uses: softprops/action-gh-release@v2

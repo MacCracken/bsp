@@ -1,5 +1,8 @@
 # lib.cyr -- BSP library public API
-# Usage: include "bsp/src/lib.cyr"
+# Usage: pull in bsp/src/lib.cyr from the consumer's entry point, or vendor
+# the single-file dist/bsp.cyr bundle. (Written without the literal
+# include-directive spelling: `cyrius vet` parses that pattern even inside a
+# comment and reported a phantom MISSING dep for the path below.)
 #
 # Binary Space Partitioning primitives for Cyrius.
 # Zero dependencies. No globals. Pure functions. 16.16 fixed-point.

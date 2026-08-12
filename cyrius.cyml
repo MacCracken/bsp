@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "BSP — Binary Space Partitioning. Spatial geometry primitives for Cyrius."
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.3.5"
+cyrius = "6.5.19"
 repository = "https://github.com/MacCracken/bsp"
 
 [build]
@@ -28,5 +28,12 @@ modules = [
     "src/frustum.cyr",
 ]
 
+# The library itself pulls in none of these — src/*.cyr is dependency-free.
+# They exist for the harnesses: tests/bsp.tcyr (assert), benches/bsp.bcyr
+# (bench), fuzz/*.fcyr and programs/ (fmt, string, alloc, args, vec, fnptr).
+# `atomic` and `result` are transitive-only (alloc -> atomic, io -> result);
+# they must be declared anyway or `cyrius lib sync` leaves them behind at
+# whatever snapshot vendored them last — before 1.2.2 declared them, the
+# vendored lib/atomic.cyr predated the 6.3.5 pin the project was on.
 [deps]
-stdlib = ["string", "alloc", "vec", "str", "fmt", "io", "syscalls", "args", "fnptr", "math", "assert", "bench"]
+stdlib = ["string", "alloc", "atomic", "vec", "str", "fmt", "io", "result", "syscalls", "args", "fnptr", "math", "assert", "bench"]

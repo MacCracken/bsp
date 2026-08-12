@@ -212,7 +212,10 @@ fn main() {
 
     # aabb_center across origin — exercises `>> 1` on a possibly-negative
     # sum. Pre-1.1.0 used bare `>>` which gave INT64_MAX for negatives.
-    var nbox[4];
+    # [32] = AABB_SIZE bytes. `var X[N]` reserves N BYTES, not N slots, and
+    # aabb_set writes four i64s — this was [4] (4 bytes), a 28-byte overrun
+    # into whatever the frame put next. Latent-benign only by frame layout.
+    var nbox[32];
     aabb_set(&nbox, 3, -5, -5, 3);
     assert_eq(aabb_center_x(&nbox), -1, "center_x(-5,3) = -1 (not INT64_MAX)");
     assert_eq(aabb_center_y(&nbox), -1, "center_y(-5,3) = -1 (not INT64_MAX)");
@@ -434,5 +437,9 @@ fn main() {
     return assert_summary();
 }
 
+# assert_summary() returns the FAILURE COUNT, and a process wait status keeps
+# only the low 8 bits — so exactly 256/512/768 failures would exit 0 and score
+# PASS. Clamp to 1 so any failure count is a failure.
 var exit_code = main();
+if (exit_code > 0) { exit_code = 1; }
 syscall(60, exit_code);

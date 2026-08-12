@@ -5,6 +5,121 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-08-11 — Cyrius 6.5.19 catch-up
+
+Toolchain catch-up release. **The Cyrius pin moves 6.3.5 → 6.5.19**, crossing the
+6.4.x band (86 patches) and the 6.5.x band (19 patches) — roughly 130 toolchain
+releases. **No geometry source changed**, and behaviour is proven identical to
+6.3.5 (see Quality gates). It carries the largest growth-tax in this project's
+history: **98,240 → 118,176 B (+19,936 B, +20.3 %)**, all of it in the
+prelude/stdlib, none of it in BSP's own emitted code.
+
+Alongside the pin, this release closes three pieces of drift that had gone
+unnoticed because nothing was checking for them: the fuzz harnesses had a file
+extension `cyrius fuzz` no longer discovers (so CI had never run them), two
+vendored stdlib modules were never being re-synced, and `cyrius vet` was
+reporting a phantom dependency.
+
+### Changed
+
+- **Cyrius pin 6.3.5 → 6.5.19** (`cyrius.cyml`). Clears the `toolchain drift`
+  warning that every local build had been printing (`cyrius.cyml pins 6.3.5 but
+  cycc is 6.5.19`).
+- **Vendored stdlib re-synced** from the 6.5.19 snapshot via `cyrius lib sync`.
+  **13 of the 14 declared modules changed** between 6.3.5 and 6.5.19 (only
+  `str.cyr` is byte-identical); `alloc.cyr` alone grew 26,485 → 42,247 B.
+- **Fuzz harnesses renamed `fuzz/*.cyr` → `fuzz/*.fcyr`.** `cyrius fuzz`
+  discovers `fuzz/*.fcyr`, so with the old names it reported *"No fuzz harnesses
+  found"* and exited **clean** — the project's most productive gate had silently
+  been a no-op. This is long-standing drift, **not** something the pin move
+  introduced: 6.3.5 expected `.fcyr` too, so `cyrius fuzz` had been finding
+  nothing here for at least the whole 6.3.x line. Only the documented manual
+  path (`cyrius build fuzz/fuzz_intersect.cyr …`) ever actually ran them.
+  All three now auto-discover and pass. Harness contents are unchanged; this is
+  a pure rename, and `.fcyr` matches the ecosystem convention (abaco, agnodrm,
+  agnosai, ai-hwaccel).
+- **`benches/bsp.bcyr` numbers are meaningful again.** The 6.5.19 bench harness
+  measures the clock-read floor (~1.3 µs here) and subtracts it from every
+  sample. Previously every op reported a near-uniform 1.34–1.75 µs that was
+  almost entirely timer overhead; the same 13 benchmarks now report true per-op
+  cost. No code changed — only what the harness reports.
+
+### Added
+
+- **`atomic` and `result` declared in `[deps] stdlib`.** Both are transitive-only
+  requirements (`alloc` → `atomic`, `io` → `result`) and so were invisible to
+  `cyrius lib sync`, which syncs the *declared* set. The copies in `lib/` were
+  therefore never refreshed — the vendored `atomic.cyr` predated even the 6.3.5
+  pin the project was sitting on. They now sync with everything else, and they
+  correctly appear in the `dist/bsp.deps` sidecar consumers read.
+- **`dist/*.deps` gitignored.** 6.5.19's `distlib` emits a `dist/bsp.deps`
+  sidecar derived from `[deps] stdlib`. Those are BSP's *harness* dependencies —
+  the bundle itself is pure geometry and imports none of them — so shipping the
+  sidecar would make a consumer's `cyrius deps` demand leaves it does not need.
+  The file is generated locally and not committed.
+- **CI now runs the fuzz harnesses** (`cyrius fuzz`, asserting `0 failed`).
+  They had never run in CI.
+- **CI now checks the `dist/bsp.cyr` version header** against `VERSION`. A stale
+  bundle header is a shipped-wrong-version bug for every consumer that vendors
+  the file, and nothing caught it before.
+
+### Fixed
+
+- **`cyrius vet` phantom dependency.** `src/lib.cyr`'s usage comment contained
+  the literal text `include "bsp/src/lib.cyr"`; `vet` parses that pattern even
+  inside a comment and reported `MISSING bsp/src/lib.cyr` — a self-referential
+  dep that never existed. Reworded the comment: `vet` is now
+  **8 deps, 0 untrusted, 0 missing** (was 9 deps, 1 missing).
+- **Stale documentation.** `README.md` told readers to build with `cyrb build`,
+  a command that has not existed for several major versions. `CLAUDE.md`
+  claimed a `lib/sakshi.cyr` that is not present, and quoted 74/79/94 assertion
+  counts and a `v1.2.0` status against an actual 103. The CI test job was still
+  named *"Test (79 assertions)"*.
+
+### Quality gates (on Cyrius 6.5.19)
+
+- **Cross-toolchain differential**: a probe exercising **every public function**
+  across all 8 modules — including degenerate, sub-precision, and ±2e9 inputs —
+  was compiled *unchanged* under 6.3.5 and under 6.5.19 and run over
+  **3,000,000 iterations (6 seeds × 500K)**. Per-module and total checksums are
+  **byte-identical, zero divergence**. This is what licenses the "no behaviour
+  change" claim; the pin move was not assumed safe.
+- **Tests**: 103/103 pass, unchanged from 1.2.1 (17 groups).
+- **Fuzz**: standard 25K gate (10K intersect + 10K aabb + 5K blockmap) clean,
+  plus **600K extra stress** (400K intersect across 2 seeds, 100K aabb,
+  100K blockmap) — all clean.
+- **Benches**: 13/13, now `fx_mul` 12 ns → `blockmap_query` 311 ns per op.
+- **Static gates**: `cyrius lint` 0 warnings, `cyrius fmt --check` clean,
+  `cyrius deny` 0 violations, `cyrius vet` 0 missing, `cyrius audit` passes,
+  `cyrius check dist/bsp.cyr` ok.
+- **Binary (standalone bsp)**: **98,240 → 118,176 B (+19,936 B, +20.3 %)** —
+  the largest pin-move growth-tax this project has taken. `CYRIUS_DCE=1` is
+  identical at 118,176 B (DCE NOPs in place; it does not shrink the file).
+  Directly comparable to the 98,208 B recorded for 1.2.0.
+
+  **Measurement method matters here** — the naive way to measure this produces a
+  number that is wrong by 26 KB. `cyrius build` **auto-vendors the stdlib into
+  `lib/`**, and the snapshot it vendors is chosen by the **`cyrius =` pin in
+  `cyrius.cyml`**, not by which `cycc` you invoke. So a second build in a tree
+  that already has a `lib/` reuses whatever vintage got vendored first, and
+  measuring old-vs-new by swapping compilers in one working tree silently
+  compares a *mixed* configuration that never exists in practice. Every figure
+  above was taken in a **fresh tree per build** (`git archive <tag>` into a
+  clean dir, no `lib/`). Ablation confirms the pin is the whole story: reverting
+  only the `cyrius =` line in the 1.2.2 tree gives 97,248 B, while reverting the
+  `[deps] stdlib` change, the `dist/bsp.deps` file, or the fuzz rename each
+  leaves 118,176 B untouched.
+
+  **Attribution** — the growth is prelude/stdlib widening, not BSP codegen. The
+  dead-code accounting moves from **384 unreachable fns / 69,598 B** to
+  **433 / 81,549 B**; BSP contributes 8 modules either way. Of the total,
+  **+896 B is the 6.3.12 W^X change** — the binary now has two
+  permission-separated `PT_LOAD` segments instead of one (`readelf -l`: 2 vs 1;
+  `CYRIUS_WX=0` builds to 117,280 B). That 896 B buys a non-writable text
+  segment and is worth paying.
+- **`dist/bsp.cyr`** regenerated at 871 lines; only the version header line
+  differs from 1.2.1, since no module source changed.
+
 ## [1.2.1] - 2026-07-12 — `asr()` is now FLOOR, not round-toward-zero
 
 Bug-fix release. Reported by the cyrius-doom 0.33.6 audit (RC-F2). **The Cyrius pin
