@@ -34,7 +34,7 @@
 
 ## Build
 
-Requires the Cyrius toolchain pinned in `cyrius.cyml` (currently 6.5.19).
+Requires the Cyrius toolchain pinned in `cyrius.cyml` (currently 6.5.20).
 
 ```sh
 cyrius build src/lib.cyr build/bsp
@@ -50,7 +50,7 @@ dependency in your own `cyrius.cyml`:
 ```toml
 [deps.bsp]
 git = "https://github.com/MacCracken/bsp"
-tag = "1.2.2"
+tag = "1.2.3"
 modules = ["dist/bsp.cyr"]
 ```
 

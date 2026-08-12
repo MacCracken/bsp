@@ -5,6 +5,94 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] - 2026-08-12 — Cyrius 6.5.20, and `asr()` becomes native
+
+A one-patch pin move that costs **nothing** — the 6.5.19 and 6.5.20 binaries are
+**byte-identical** (same SHA256, 118,176 B, same 433 fns / 81,549 B dead-code
+accounting) — plus the first real payoff from having crossed into the 6.4.x/6.5.x
+band in 1.2.2: **`asr()` is now a one-line alias for the native `>>>` operator**,
+which BSP could not use while it was pinned to 6.3.5.
+
+### Changed
+
+- **Cyrius pin 6.5.19 → 6.5.20** (`cyrius.cyml`). **Zero growth tax and zero
+  codegen change**: fresh-tree builds at both pins produce bit-identical
+  binaries. This is the cheapest pin move in the project's history, and stands in
+  deliberate contrast to 1.2.2's +19,936 B.
+
+  6.5.20's headline fix is a **silent miscompile of `switch` / `match`**: a case
+  body that exited by anything other than `return` fell through a jump table that
+  the v5.6.27 regalloc NOP-harvest compactor had shifted by +4 bytes per
+  preceding body — wrong answer with no diagnostic, or SIGSEGV. **BSP is not
+  exposed**: it contains no `switch`, no `match`, and no `#derive` (grep-verified
+  across `src/`, `tests/`, `benches/`, `fuzz/`). The pin is taken for currency
+  and for the toolchain-drift warning, not to fix anything here.
+
+- **`asr()` reimplemented on the native `>>>` operator.** Cyrius gained `>>>` —
+  an arithmetic, sign-preserving right shift — in **v6.4.46**. BSP was pinned to
+  6.3.5 until yesterday's 1.2.2, so every release from 1.1.0 through 1.2.2
+  synthesised the negative path by hand:
+
+  ```
+  if (val >= 0) { return val >> bits; }
+  var pos = 0 - val;
+  return 0 - ((pos + (1 << bits) - 1) >> bits);
+  ```
+
+  That is now `return val >>> bits;` — a branch, a negate, an add, a shift and a
+  second negate collapsed into a single `sar`. **Emitted code shrinks 81,549 →
+  81,421 B (−128 B)** for a function called from **43 sites across 4 modules**
+  and sitting under every `fx_mul` / `fx_to_int` in the renderer's hot path.
+
+  `asr()` is **kept as a function, not removed** — it is public API that
+  consumers call, and it remains the safe spelling. `>>>` sits on the **TERM**
+  precedence tier alongside `* / %`, binding *tighter* than `+ - & | ^`, so
+  `a + b >>> 16` means `a + (b >>> 16)`. Any direct use over a sum must
+  parenthesise; `asr()` has no such trap. Bypassing the call in `fx_mul` /
+  `fx_to_int` / `fx_div` was measured and produced **no further size win**, so it
+  was not taken.
+
+  **This is a pure internal substitution — no API, no behaviour, no semantics
+  change.** `asr()` remains FLOOR division by 2^bits (the 1.2.1 RC-F2 fix), which
+  is exactly what `sar` does for negative values.
+
+- **README** now states the 6.5.20 pin and the `1.2.3` consumer tag.
+
+### Quality gates (on Cyrius 6.5.20)
+
+- **Tests**: 103 passed, 0 failed — including the seven explicit `asr` floor
+  assertions (`asr(-3,1) = -2`, `asr(-9,2) = -3`, `fx_to_int(-0.5) = -1`) that
+  pin the semantics the substitution had to preserve.
+- **`asr()` ≡ `>>>` differential**: **600,576 cases, 0 mismatches**. Every shift
+  width 0–31 against 18 pathological values (0, ±1, ±3, ±65535, ±65536,
+  ±2147483647, ±2ᶟ²,  −(2⁶³−1)), a 300K random sweep over ±2e9, and a further
+  300K over the exact `x * y >>> 16` shape `fx_mul` produces. All four shift
+  widths BSP actually uses (1, 4, 8, 16) are literals inside that range.
+- **Whole-API differential, 1.2.2 source vs 1.2.3 source**: one probe calling
+  **every public function** — all 32 of them — folding results into six
+  per-module checksums, compiled *unchanged* against both trees.
+  **6 seeds × 100,000 iterations = 600,000 per build: every checksum identical,
+  zero divergence.** Corpus spans sub-precision, normal-world, ±2e9 extreme and
+  degenerate/tiny coordinate bands.
+- **Fuzz**: `cyrius fuzz` 3/3 pass (25K standard gate), plus a stress run of
+  **1,800,000 iterations** (3 harnesses × 3 seeds × 200K), 0 failures.
+- **Benches**: 13/13. `fx_mul` 11 ns, `blockmap_query` 305–307 ns, against
+  1.2.2's 12 ns / 311 ns. **Read as no regression, not as a win** — the deltas
+  are inside run-to-run noise on this box. The honest, repeatable measurement of
+  this change is the −128 B of emitted code.
+- **`cyrius audit`**: fmt clean, lint clean (0 warnings, 0 untracked deferrals),
+  tests 103/0, bench 1/0. **`cyrius vet`: 8 deps, 0 untrusted, 0 missing.**
+  `cyrius check dist/bsp.cyr`: ok.
+- **Bundle**: `cyrius distlib` regenerated `dist/bsp.cyr` (885 lines, v1.2.3).
+  The diff is confined to the version header and `fixed.cyr` — **no other module
+  moved a byte**.
+
+### Note for the next audit
+
+`cyrius audit`'s docs stage reports **33 undocumented public fns**. Not addressed
+here (this release is deliberately narrow); recorded so the upcoming full audit
+starts from a known number.
+
 ## [1.2.2] - 2026-08-11 — Cyrius 6.5.19 catch-up
 
 Toolchain catch-up release. **The Cyrius pin moves 6.3.5 → 6.5.19**, crossing the
