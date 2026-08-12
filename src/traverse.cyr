@@ -21,7 +21,6 @@
 # node_idx = which node
 # px, py = point position (fixed-point)
 # Returns: 0 = right/front, 1 = left/back
-
 fn bsp_point_on_side(nodes, node_idx, px, py) {
     # Compute the node base once instead of four accessor calls that each
     # recompute node_idx * BSP_NODE_SIZE. Field offsets match the accessors
@@ -42,19 +41,40 @@ fn bsp_point_on_side(nodes, node_idx, px, py) {
 # nodes = pointer to nodes array
 # node_count = number of nodes (root = node_count - 1)
 # px, py = point position (fixed-point)
-
 fn bsp_find_subsector(nodes, node_count, px, py) {
     if (node_count == 0) { return 0; }
 
     var idx = node_count - 1;
+    if (idx < 0) { return 0; }
 
+    # Bound the walk by node_count. A well-formed tree visits each node at most
+    # once and terminates at a subsector leaf, so none of these guards fire on
+    # valid input — but `node_count` was previously used only to pick the root,
+    # and nothing checked the child indices we follow. Three malformed-input
+    # failures were reachable, and consumers build these arrays from map files
+    # they did not author, so none of them are hypothetical:
+    #
+    #   1. A CYCLE hung here forever (a 2-node cycle spins indefinitely).
+    #   2. A child index past the end of the array read arbitrary memory.
+    #   3. A NEGATIVE child was silently accepted as a LEAF: two's complement
+    #      sets bit 15, so bsp_is_subsector(-5) is 1 and bsp_subsector_idx
+    #      returned -5 & 0x7FFF = 32763. No hang, no crash here — the caller
+    #      then indexed its subsector array with 32763 and read out of bounds.
+    #      That one has to be rejected where the child is READ, because the
+    #      loop condition would already have classified it as a leaf.
+    var steps = node_count;
     while (bsp_is_subsector(idx) == 0) {
+        if (idx >= node_count) { return 0; }
+        if (steps <= 0) { return 0; }
+        steps -= 1;
+
         var side = bsp_point_on_side(nodes, idx, px, py);
         if (side == 0) {
             idx = bsp_node_child_r(nodes, idx);
         } else {
             idx = bsp_node_child_l(nodes, idx);
         }
+        if (idx < 0) { return 0; }
     }
 
     return bsp_subsector_idx(idx);
@@ -67,7 +87,6 @@ fn bsp_find_subsector(nodes, node_count, px, py) {
 # Simple test: is the bbox on the same side as the viewpoint,
 # or does it straddle the partition line?
 # Returns 1 if potentially visible, 0 if fully behind.
-
 fn bsp_bbox_visible(bbox, vx, vy, vangle_cos, vangle_sin, fov_half) {
     # For now: always visible (conservative). Full frustum culling lives in
     # frustum.cyr (frustum_test_aabb); this remains a placeholder. The

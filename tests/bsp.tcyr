@@ -434,6 +434,141 @@ fn main() {
     aabb_set(&fbox_behind, fx_from_int(50), fx_from_int(-50), fx_from_int(-150), fx_from_int(-50));
     assert_eq(frustum_test_aabb(fr, &fbox_behind), 1, "aabb behind: conservative pass (not culled)");
 
+    # ============================================================
+    test_group("malformed-input hardening (1.2.3)");
+    # ============================================================
+
+    # --- bsp_find_subsector must TERMINATE on a malformed tree ---
+    # Consumers build node arrays from map files they did not author, so a
+    # cyclic or out-of-range child reference is reachable from untrusted data.
+    # Before 1.2.3 node_count was used only to pick the root and nothing
+    # bounded the walk. NOTE: if this regresses, the suite HANGS rather than
+    # failing -- that is the bug being pinned.
+
+    # 2-node cycle: root(1) -> 0 -> 1 -> 0 ... neither child flagged subsector.
+    var cyc = alloc(BSP_NODE_SIZE * 2);
+    bsp_node_set(cyc, 1, 0, 0, fx_from_int(1), 0);
+    bsp_node_set_children(cyc, 1, 0, 0);
+    bsp_node_set(cyc, 0, 0, 0, fx_from_int(1), 0);
+    bsp_node_set_children(cyc, 0, 1, 1);
+    assert_eq(bsp_find_subsector(cyc, 2, fx_from_int(10), fx_from_int(10)), 0,
+              "cyclic tree terminates, returns 0");
+
+    # Child index past the end of the array must not be followed.
+    var oob = alloc(BSP_NODE_SIZE * 1);
+    bsp_node_set(oob, 0, 0, 0, fx_from_int(1), 0);
+    bsp_node_set_children(oob, 0, 999, 999);
+    assert_eq(bsp_find_subsector(oob, 1, fx_from_int(10), fx_from_int(10)), 0,
+              "out-of-range child index returns 0");
+
+    # Negative child index must not be followed either.
+    var neg = alloc(BSP_NODE_SIZE * 1);
+    bsp_node_set(neg, 0, 0, 0, fx_from_int(1), 0);
+    bsp_node_set_children(neg, 0, 0 - 5, 0 - 5);
+    assert_eq(bsp_find_subsector(neg, 1, fx_from_int(10), fx_from_int(10)), 0,
+              "negative child index returns 0");
+
+    # A well-formed tree is unaffected by the bound (re-check of the 2-node
+    # tree built in the traversal group above).
+    assert_eq(bsp_find_subsector(tree, 2, fx_from_int(100), fx_from_int(50)), 0,
+              "valid tree still resolves after bounding");
+    assert_eq(bsp_find_subsector(tree, 2, fx_from_int(900), fx_from_int(50)), 1,
+              "valid tree deep walk still resolves");
+
+    # --- aabb_init sentinels must dominate the whole i64 coordinate range ---
+    # Through 1.2.2 they were +-2^31, but coordinates are 16.16 in 64-BIT
+    # integers, so any world coordinate above 32767.99 exceeded the seed and
+    # aabb_add_point's comparisons never fired. Same defect class as the
+    # bsp_nearest_seg sentinel fixed in 1.2.0. The query group above already
+    # exercises world coordinates of 40000/60000, so the library's own tests
+    # asserted a range aabb_init could not represent.
+    var big = alloc(AABB_SIZE);
+    aabb_init(big);
+    var bigp = fx_from_int(40000);
+    aabb_add_point(big, bigp, bigp);
+    assert_eq(aabb_width(big), 0, "one-point box at world 40000 has width 0");
+    assert_eq(aabb_height(big), 0, "one-point box at world 40000 has height 0");
+    assert_eq(aabb_contains_point(big, bigp, bigp), 1, "one-point box contains its point");
+    assert_eq(aabb_contains_point(big, fx_from_int(35000), fx_from_int(35000)), 0,
+              "one-point box excludes a point 5000 units away");
+
+    # A grown box at large coordinates must still bound correctly.
+    aabb_add_point(big, fx_from_int(50000), fx_from_int(45000));
+    assert_eq(fx_to_int(aabb_width(big)), 10000, "large-coord box width = 10000");
+    assert_eq(fx_to_int(aabb_height(big)), 5000, "large-coord box height = 5000");
+
+    # A fresh, never-populated box is empty and centred at the origin.
+    # center_x returned -1 before 1.2.3 because the +-2^31 pair was asymmetric.
+    var fresh = alloc(AABB_SIZE);
+    aabb_init(fresh);
+    assert_eq(aabb_width(fresh), 0, "fresh box width 0");
+    assert_eq(aabb_height(fresh), 0, "fresh box height 0");
+    assert_eq(aabb_center_x(fresh), 0, "fresh box center_x 0 (was -1)");
+    assert_eq(aabb_center_y(fresh), 0, "fresh box center_y 0 (was -1)");
+    assert_eq(aabb_contains_point(fresh, 0, 0), 0, "fresh box contains nothing");
+
+    # --- negative counts must not be treated as "empty but valid" ---
+    # Both query entry points tested `count == 0`, so a NEGATIVE count skipped
+    # the loop and fell through to the success path.
+    var nsegs = alloc(4 * 32);
+    for (var ni = 0; ni < 4; ni += 1) {
+        store64(nsegs + ni * 32 + 0, fx_from_int(10));
+        store64(nsegs + ni * 32 + 8, fx_from_int(10));
+        store64(nsegs + ni * 32 + 16, fx_from_int(20));
+        store64(nsegs + ni * 32 + 24, fx_from_int(20));
+    }
+    # This one inverted WORSE than the count==0 case: it returned 1, reporting
+    # the point as INSIDE an empty set, which callers branch on for collision.
+    assert_eq(bsp_point_in_subsector(0, 0, nsegs, 0), 0, "point_in_subsector count=0 is outside");
+    assert_eq(bsp_point_in_subsector(0, 0, nsegs, 0 - 1), 0, "point_in_subsector count=-1 is outside");
+    # And this one returned index 0 — a valid-looking index into no entries.
+    assert_eq(bsp_nearest_seg(0, 0, nsegs, 0), 0 - 1, "nearest_seg count=0 is -1");
+    assert_eq(bsp_nearest_seg(0, 0, nsegs, 0 - 1), 0 - 1, "nearest_seg count=-1 is -1");
+    # These two were already correct; pinned so they stay that way.
+    assert_eq(bsp_count_in_aabb(fresh, nsegs, 0 - 1), 0, "count_in_aabb count=-1 is 0");
+    assert_eq(bsp_check_sight(0, 0, fx_from_int(5), fx_from_int(5), nsegs, 0 - 1, nsegs), 1,
+              "check_sight count=-1 is visible (conservative)");
+
+    # --- blockmap_cell_seg guard parity with blockmap_cell_count ---
+    # blockmap_get_cell returns 0 for an out-of-range cell. cell_count already
+    # tolerated that 0; cell_seg dereferenced it and took SIGSEGV.
+    var bad_cell = blockmap_get_cell(bm, 99, 99);
+    assert_eq(bad_cell, 0, "out-of-range get_cell returns 0");
+    assert_eq(blockmap_cell_count(bad_cell), 0, "cell_count(0) is guarded");
+    assert_eq(blockmap_cell_seg(bad_cell, 0), 0 - 1, "cell_seg(0,0) returns -1, not SIGSEGV");
+
+    # idx is range-checked: an unchecked idx reads into the NEXT cell's data.
+    assert_eq(blockmap_cell_seg(cell, 0 - 1), 0 - 1, "cell_seg negative idx returns -1");
+    assert_eq(blockmap_cell_seg(cell, BM_CELL_MAX_SEGS), 0 - 1, "cell_seg idx at cap returns -1");
+    assert_eq(blockmap_cell_seg(cell, 0), 7, "cell_seg valid idx still returns the seg");
+
+    # --- blockmap overflow is reported, not silent ---
+    # A cell holds at most BM_CELL_MAX_SEGS. Past that, blockmap_add rejects
+    # and blockmap_insert_seg counts the rejections; before 1.2.3 insert_seg
+    # always returned 0 and the loss was undetectable.
+    var ovf = alloc(40 + 1 * 136);
+    blockmap_init(ovf, 0, 0, fx_from_int(4096), 1, 1);
+    var accepted = 0;
+    for (var oi = 0; oi < BM_CELL_MAX_SEGS; oi += 1) {
+        accepted += blockmap_add(ovf, 0, 0, oi);
+    }
+    assert_eq(accepted, BM_CELL_MAX_SEGS, "blockmap_add accepts up to the cap");
+    assert_eq(blockmap_add(ovf, 0, 0, 999), 0, "blockmap_add rejects past the cap");
+    assert_eq(blockmap_cell_count(blockmap_get_cell(ovf, 0, 0)), BM_CELL_MAX_SEGS,
+              "full cell holds exactly the cap");
+
+    # insert_seg into that same full single-cell grid must report 1 drop.
+    assert_eq(blockmap_insert_seg(ovf, 42, fx_from_int(10), fx_from_int(10),
+                                  fx_from_int(20), fx_from_int(20)), 1,
+              "insert_seg reports 1 dropped cell when full");
+
+    # And 0 drops on a fresh grid.
+    var okbm = alloc(40 + 1 * 136);
+    blockmap_init(okbm, 0, 0, fx_from_int(4096), 1, 1);
+    assert_eq(blockmap_insert_seg(okbm, 1, fx_from_int(10), fx_from_int(10),
+                                  fx_from_int(20), fx_from_int(20)), 0,
+              "insert_seg reports 0 drops when it fits");
+
     return assert_summary();
 }
 

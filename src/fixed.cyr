@@ -12,9 +12,14 @@ enum BspFixed {
     FX_SHIFT = 16;
 }
 
+# Arithmetic (sign-preserving) right shift: FLOOR division of `val` by 2^bits.
+# This is what C's `>>` does on signed ints, and what DOOM's fixed-point and
+# coordinate math assume. Negatives round toward NEGATIVE INFINITY, so
+# asr(-3, 1) is -2, not -1. `bits` must be in 0..63.
+#
+# Prefer this over a bare `>>` on any signed value — Cyrius `>>` is LOGICAL.
 fn asr(val, bits) {
-    # Arithmetic (sign-preserving) right shift = FLOOR division by 2^bits, matching
-    # C's `>>` on signed ints (what DOOM's fixed-point + coord math assume).
+    # Implementation note, not API contract.
     #
     # This is now a thin alias for the NATIVE `>>>` operator (Cyrius v6.4.46).
     # BSP was pinned to 6.3.5 until 1.2.2, which predates `>>>`, so 1.1.0-1.2.2
@@ -38,10 +43,26 @@ fn asr(val, bits) {
     return val >>> bits;
 }
 
+# Convert a plain integer to 16.16 fixed-point. fx_from_int(1) == FX_ONE.
+# No range check: |n| above 32767 overflows the 16.16 representable range.
 fn fx_from_int(n) { return n << 16; }
+
+# Convert 16.16 fixed-point back to a plain integer, rounding toward
+# NEGATIVE INFINITY (floor). fx_to_int(-32768) is -1, not 0.
 fn fx_to_int(f) { return asr(f, 16); }
+
+# Multiply two 16.16 fixed-point values. The intermediate product is 64-bit,
+# so |a*b| up to 2^63 is safe; each result is floored independently, so
+# fx_mul is NOT associative across a chain of products.
 fn fx_mul(a, b) { return asr(a * b, 16); }
 
+# Divide two 16.16 fixed-point values. Returns FX_MAX on divide-by-zero rather
+# than trapping — callers that need to distinguish a real FX_MAX result from
+# the error sentinel must check the divisor themselves.
+#
+# Large numerators are scaled down by 8 bits BEFORE the shift-left, costing
+# precision but avoiding overflow; if that scaling collapses the divisor to
+# zero, FX_MAX is returned as well.
 fn fx_div(a, b) {
     if (b == 0) { return FX_MAX; }
     var aa = a;
@@ -52,7 +73,15 @@ fn fx_div(a, b) {
     return (aa << 16) / bb;
 }
 
+# Absolute value. Scale-agnostic — works on fixed-point and plain integers.
 fn fx_abs(f) { if (f < 0) { return -f; } return f; }
+
+# Lesser of two values. Scale-agnostic.
 fn fx_min(a, b) { if (a < b) { return a; } return b; }
+
+# Greater of two values. Scale-agnostic.
 fn fx_max(a, b) { if (a > b) { return a; } return b; }
+
+# Clamp `f` into [lo, hi]. Scale-agnostic. Callers must pass lo <= hi;
+# an inverted range returns `lo`.
 fn fx_clamp(f, lo, hi) { if (f < lo) { return lo; } if (f > hi) { return hi; } return f; }

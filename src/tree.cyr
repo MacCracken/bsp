@@ -41,16 +41,34 @@ fn bsp_subsector_idx(child) {
     return child & 0x7FFF;
 }
 
-# Get node partition line fields
+# Partition line origin X of node `idx` (fixed-point).
+# No bounds check: `idx` must be in 0..node_count-1.
 fn bsp_node_x(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_X); }
+
+# Partition line origin Y of node `idx` (fixed-point). No bounds check.
 fn bsp_node_y(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_Y); }
+
+# Partition line direction X of node `idx` (fixed-point). No bounds check.
 fn bsp_node_dx(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_DX); }
+
+# Partition line direction Y of node `idx` (fixed-point). No bounds check.
 fn bsp_node_dy(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_DY); }
+
+# Right (front) child reference of node `idx`. Test it with bsp_is_subsector:
+# if set, it is a leaf and bsp_subsector_idx extracts the subsector number;
+# otherwise it is another node index. No bounds check.
 fn bsp_node_child_r(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_CHILD_R); }
+
+# Left (back) child reference of node `idx`. Same encoding as the right child.
+# No bounds check.
 fn bsp_node_child_l(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_CHILD_L); }
 
-# Get pointer to a node's child bounding box
+# Pointer to the right child's 32-byte bounding box inside node `idx`.
+# Usable directly with the aabb_* functions. No bounds check.
 fn bsp_node_bbox_r(nodes, idx) { return nodes + idx * BSP_NODE_SIZE + BSP_NODE_BBOX_R; }
+
+# Pointer to the left child's 32-byte bounding box inside node `idx`.
+# Usable directly with the aabb_* functions. No bounds check.
 fn bsp_node_bbox_l(nodes, idx) { return nodes + idx * BSP_NODE_SIZE + BSP_NODE_BBOX_L; }
 
 # Set a node's partition line

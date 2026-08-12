@@ -12,7 +12,18 @@ var _fz_state = 12345;
 
 fn _fz_rand() {
     _fz_state = _fz_state * 6364136223846793005 + 1442695040888963407;
-    return _fz_state;
+    # Mix the HIGH bits down before returning. A power-of-two LCG has period
+    # 2^(k+1) in bit k, so bit 0 simply ALTERNATES and the low bits generally
+    # are near-deterministic. Returning the raw state made every `% n` draw
+    # correlate with the call index: measured in fuzz_aabb, every `% 10` came
+    # out EVEN across 50,000 iterations, so a 1-element case was unreachable
+    # and the aabb_init sentinel bug fixed in 1.2.3 could never be hit.
+    #
+    # `>>` is Cyrius's LOGICAL shift, which is what a bit-mixer wants here.
+    var x = _fz_state;
+    x = x ^ (x >> 31);
+    x = x ^ (x >> 17);
+    return x;
 }
 
 fn _fz_coord() {

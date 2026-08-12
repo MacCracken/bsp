@@ -12,13 +12,41 @@ var _fz_state = 54321;
 
 fn _fz_rand() {
     _fz_state = _fz_state * 6364136223846793005 + 1442695040888963407;
-    return _fz_state;
+    # Mix the HIGH bits down before returning. A power-of-two LCG has period
+    # 2^(k+1) in bit k, so bit 0 simply ALTERNATES and the low bits generally
+    # are near-deterministic. Returning the raw state made every `% n` draw
+    # correlate with the call index: measured in fuzz_aabb, every `% 10` came
+    # out EVEN across 50,000 iterations, so a 1-element case was unreachable
+    # and the aabb_init sentinel bug fixed in 1.2.3 could never be hit.
+    #
+    # `>>` is Cyrius's LOGICAL shift, which is what a bit-mixer wants here.
+    var x = _fz_state;
+    x = x ^ (x >> 31);
+    x = x ^ (x >> 17);
+    return x;
 }
 
+# Coordinates must STRADDLE the aabb_init sentinel magnitude, not sit far below
+# it. Through 1.2.2 this generated fx_from_int((r % 2000) - 1000) — a maximum of
+# ~65.5M fixed, about 32x below the old +-2^31 seeds — so 25,000 iterations
+# could never reach the range where aabb_init's sentinels failed to dominate.
+# That gap is exactly why the bug fixed in 1.2.3 survived every fuzz run.
+#
+# Bands: DOOM-scale, ~100k world units, and +-2^45 fixed.
+#
+# The top band is deliberately ABOVE the old 2^31 sentinel (so a regression to
+# it is caught immediately) and deliberately BELOW the current 2^50 one (so we
+# test INSIDE the documented supported range). Generating past the sentinel
+# would be testing input aabb.cyr states it does not support, and the sentinel
+# cannot simply be raised to cover it: frustum_test_aabb caps it under 2^55.
 fn _fz_coord() {
     var r = _fz_rand();
     if (r < 0) { r = 0 - r; }
-    return fx_from_int((r % 2000) - 1000);
+    if (r < 0) { r = 0; }
+    var band = r % 3;
+    if (band == 0) { return fx_from_int((r % 2000) - 1000); }
+    if (band == 1) { return fx_from_int((r % 200000) - 100000); }
+    return (r % 70368744177664) - 35184372088832;
 }
 
 fn main() {
@@ -33,6 +61,8 @@ fn main() {
 
     var box_a[32];
     var box_b[32];
+    # Up to 10 (x,y) pairs, replayed to check containment after growing a box.
+    var pts[160];
 
     for (var i = 0; i < iters; i = i + 1) {
         var op = _fz_rand();
@@ -45,7 +75,11 @@ fn main() {
             var np = (_fz_rand() % 10) + 1;
             if (np < 0) { np = 0 - np; }
             for (var j = 0; j < np; j = j + 1) {
-                aabb_add_point(&box_a, _fz_coord(), _fz_coord());
+                var qx = _fz_coord();
+                var qy = _fz_coord();
+                store64(&pts + j * 16, qx);
+                store64(&pts + j * 16 + 8, qy);
+                aabb_add_point(&box_a, qx, qy);
             }
             # Width and height must be >= 0
             if (aabb_width(&box_a) < 0) {
@@ -55,6 +89,28 @@ fn main() {
             if (aabb_height(&box_a) < 0) {
                 syscall(1, 2, "FAIL: negative height\n", 22);
                 syscall(60, 1);
+            }
+            # THE property that actually pins aabb_init's sentinels: a box grown
+            # by aabb_add_point must contain every point it was grown from.
+            # "width >= 0" alone is satisfied by a corrupted box, which is why
+            # the +-2^31 sentinel bug survived every pre-1.2.3 fuzz run.
+            for (var k = 0; k < np; k = k + 1) {
+                if (aabb_contains_point(&box_a, load64(&pts + k * 16),
+                                        load64(&pts + k * 16 + 8)) != 1) {
+                    syscall(1, 2, "FAIL: added point not contained in box\n", 39);
+                    syscall(60, 1);
+                }
+            }
+            # A box grown from exactly one point is a degenerate point-box.
+            if (np == 1) {
+                if (aabb_width(&box_a) != 0) {
+                    syscall(1, 2, "FAIL: single-point box has nonzero width\n", 41);
+                    syscall(60, 1);
+                }
+                if (aabb_height(&box_a) != 0) {
+                    syscall(1, 2, "FAIL: single-point box has nonzero height\n", 42);
+                    syscall(60, 1);
+                }
             }
         }
 

@@ -9,11 +9,31 @@
 - **Language**: Cyrius (native, compiled via cycc 6.5.20)
 - **Version**: SemVer, single source of truth at `VERSION` (referenced
   via `version = "${file:VERSION}"` in `cyrius.cyml`)
-- **Binary contribution**: ~2KB compiled (885 lines across 8 modules
+- **Binary contribution**: ~2KB compiled (1057 lines across 8 modules
   in `dist/bsp.cyr`)
-- **Status**: v1.2.3 — STABLE on Cyrius 6.5.20. 103 tests passing,
-  13 benchmarks (10–307 ns/op), 3 fuzz harnesses (25K-iter standard
-  gate). 1.2.3 is a **free pin move plus one language upgrade**: the
+- **Status**: v1.2.3 — STABLE on Cyrius 6.5.20. **136 tests passing**,
+  13 benchmarks (10–252 ns/op), 3 fuzz harnesses (25K-iter standard
+  gate), **0 undocumented public functions**.
+
+  1.2.3 carries a **full audit** that found five correctness defects and
+  two defects in the fuzz harnesses themselves. Highest-value lessons:
+  - **`aabb_init`'s sentinels were ±2^31 in an i64 library** — any world
+    coordinate past 32767.99 exceeded the seed, so a box grown from one
+    point at (40000,40000) measured 7232 units wide. Now ±2^50
+    (`AABB_EMPTY`), bounded ABOVE by `frustum_test_aabb`, which
+    multiplies `asr(edge,4)` by up to 2^12 and needs the seed under 2^55.
+  - **`bsp_find_subsector` never validated child indices** — a cyclic
+    tree hung forever, and a NEGATIVE child was read as a leaf (two's
+    complement sets bit 15) returning subsector 32763.
+  - **The fuzz harnesses returned the raw LCG state**, so `% n`
+    correlated with the call index — every `% 10` came out EVEN, making
+    a single-point box unreachable. `_fz_rand` now mixes high bits down.
+  - **A gate you have not mutation-tested is not a gate.** Widening the
+    fuzz coordinates alone did NOT catch the aabb bug; the harness also
+    lacked the property ("every point added must be contained"). Both
+    were needed, and only running it against 1.2.2 proved it.
+
+  1.2.3 is also a **free pin move plus one language upgrade**: the
   6.5.19 → 6.5.20 builds are **byte-identical** (same SHA256, 118,176 B),
   and `asr()` became a one-line alias for the native `>>>` operator
   (arithmetic right shift, added in Cyrius **v6.4.46** — unavailable
@@ -142,6 +162,16 @@ src/
   parenthesised — `(a + b) >>> 16`. `asr()` has no such trap.
 - **Guard all divisions.** Check denominator AND denominator-after-scaling for zero.
 - **Property tests > value tests.** "distance is always >= 0" catches more bugs than "distance(5,5) == 7".
+- **Mutation-test every new gate.** A test or fuzz invariant you have not
+  seen FAIL is not evidence of anything. Run it against the previous
+  release: it must be RED there and GREEN here. In 1.2.3 this caught two
+  self-deceptions — widening the fuzz coordinates alone did *not* find the
+  `aabb_init` bug (the harness's only real invariant, `width >= 0`, is
+  satisfied by a corrupted box), and `np == 1` was unreachable because the
+  PRNG's low bit alternated. Both looked like working gates.
+- **Check the sampler, not just the invariant.** A power-of-two LCG's low
+  bits have short periods, so `state % n` correlates with the call index.
+  Mix high bits down before taking a modulus.
 - **No globals.** Every function takes its data as arguments. The consumer owns the memory.
 - **Benchmarks mean something again (6.5.19).** The bench harness now measures
   the clock-read floor (~1.3 µs) and subtracts it from every sample, so per-op
@@ -168,10 +198,10 @@ cyrius build src/lib.cyr build/bsp
 # unreachable code becomes inert. Used by release.yml.
 CYRIUS_DCE=1 cyrius build src/lib.cyr build/bsp
 
-# Test (103 assertions across 17 groups)
+# Test (136 assertions across 18 groups)
 cyrius test tests/bsp.tcyr
 
-# Benchmark (13 ops, 10–307 ns/op; harness subtracts the ~1.3us timer floor)
+# Benchmark (13 ops, 10–252 ns/op; harness subtracts the ~1.3us timer floor)
 cyrius build benches/bsp.bcyr build/bench && ./build/bench
 
 # Fuzz — all 3 harnesses, auto-discovered from fuzz/*.fcyr
@@ -216,7 +246,7 @@ Root files (required):
   CODE_OF_CONDUCT.md, LICENSE, VERSION, cyrius.cyml
 
 tests/:
-  bsp.tcyr — 103 assertions across 17 test groups
+  bsp.tcyr — 136 assertions across 18 test groups
 
 benches/:
   bsp.bcyr — 13 benchmarks (fx_mul through check_sight)

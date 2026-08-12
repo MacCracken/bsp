@@ -14,14 +14,53 @@ enum BBox {
     AABB_LEFT = 16;
     AABB_RIGHT = 24;
     AABB_SIZE = 32;
+    # Inverted seeds for an "empty" box, +-2^61.
+    #
+    # These were +-2^31 through 1.2.2, which is the same defect class as the
+    # bsp_nearest_seg sentinel fixed in 1.2.0: coordinates here are 16.16 in
+    # 64-BIT integers, so any world coordinate above 32767.99 produces a fixed
+    # value LARGER than a 2^31 seed and aabb_add_point's comparisons never
+    # fire. A box built from the single point (40000, 40000) measured 7232
+    # world units wide and reported (35000, 35000) as inside it.
+    #
+    # NOT INT64_MIN/INT64_MAX: aabb_width computes RIGHT - LEFT, and
+    # INT64_MIN - INT64_MAX wraps to +1, so a fresh box would report width 1
+    # while still passing fuzz_aabb's "width >= 0" invariant. At +-2^61 that
+    # subtraction is -2^62 — representable and negative — so aabb_width and
+    # aabb_height still return 0 on a fresh box, and aabb_center_x now returns
+    # exactly 0 instead of the -1 the asymmetric 2^31 pair produced.
+    # Stored as the MAGNITUDE only: a Cyrius enum initialiser must be a
+    # non-negative literal (`AABB_EMPTY = -1125...` is "expected number,
+    # got '-'"), so the negative seed is written `0 - AABB_EMPTY` below.
+    #
+    # 2^50, NOT something larger. The upper bound is set by frustum.cyr, not by
+    # aabb.cyr: frustum_test_aabb computes `lx = asr(LEFT - vx, 4)` and then
+    # `fx_mul(lx, lnx)` where `lnx = asr(normal, 4)` reaches 2^12 for a unit
+    # normal. That product must stay under 2^63, so |sentinel| must be under
+    # 2^55. A 2^61 seed overflows it — measured: the raw product came out as
+    # exactly 0 (the low 64 bits of 2^69), which would silently flip a corner's
+    # half-plane sign and cull or un-cull a fresh box arbitrarily.
+    #
+    # 2^50 fixed is ~1.7e10 world units — far past any plausible map, and 32x
+    # under the frustum ceiling.
+    AABB_EMPTY = 1125899906842624;
 }
 
-# Initialize an AABB to "empty" (inverted extremes)
+# Initialize an AABB to "empty" (inverted extremes), ready for aabb_add_point.
+# A fresh box has width 0, height 0, centre (0,0), and contains no point.
+#
+# SUPPORTED COORDINATE RANGE: |coord| < AABB_EMPTY (2^50 fixed, ~1.7e10 world
+# units). A coordinate at or beyond the sentinel does not beat it, so
+# aabb_add_point silently leaves that edge at the sentinel and the box is
+# wrong. The bound cannot simply be raised — frustum_test_aabb multiplies
+# `asr(edge, 4)` by a normal of up to 2^12 and needs the sentinel under 2^55.
+# 16.16 fixed-point has ~32768 world units of useful precision anyway
+# (see fx_from_int), so this ceiling is far past any real map.
 fn aabb_init(box) {
-    store64(box + AABB_TOP, -2147483648);
-    store64(box + AABB_BOTTOM, 2147483647);
-    store64(box + AABB_LEFT, 2147483647);
-    store64(box + AABB_RIGHT, -2147483648);
+    store64(box + AABB_TOP, 0 - AABB_EMPTY);
+    store64(box + AABB_BOTTOM, AABB_EMPTY);
+    store64(box + AABB_LEFT, AABB_EMPTY);
+    store64(box + AABB_RIGHT, 0 - AABB_EMPTY);
     return 0;
 }
 

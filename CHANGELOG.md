@@ -5,15 +5,191 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.3] - 2026-08-12 — Cyrius 6.5.20, and `asr()` becomes native
+## [1.2.3] - 2026-08-12 — Cyrius 6.5.20, native `asr()`, and a full audit
 
-A one-patch pin move that costs **nothing** — the 6.5.19 and 6.5.20 binaries are
+Three pieces of work: a **free** toolchain pin move, the first payoff from having
+crossed into the 6.4.x band (native `>>>`), and a **full codebase audit**.
+
+The audit found **five correctness defects** — a bounding box that has been
+silently wrong for any coordinate past 32767.99 world units since the library
+existed, a tree walk that hangs forever on a cyclic tree, a containment query
+that reports a point as inside an *empty* set, an accessor that SIGSEGVs on the
+value its own sibling is documented to return, and a spatial index that drops
+segments with no way for the caller to find out — plus **two defects in the fuzz
+harnesses themselves**, which is why none of the above had been caught. Every
+harness had been drawing correlated random numbers, and the one that should have
+caught the bounding-box bug could not reach it and would not have asserted it.
+
+**Assertions 103 → 136. Undocumented public functions 33 → 0.**
+
+### Fixed — audit findings
+
+- **`aabb_init` sentinels were ±2^31 in a 64-bit library — silent wrong
+  containment.** Coordinates are 16.16 fixed-point in **i64**, so any world
+  coordinate above 32767.99 produces a value LARGER than the seed and
+  `aabb_add_point`'s comparisons never fire. Measured: a box grown from the
+  single point `(40000, 40000)` came out **7232 world units wide** and reported
+  `(35000, 35000)` — a point 5000 units away — as **inside** it. No crash, no
+  assertion: silently wrong containment, and therefore silently wrong frustum
+  culling, since `tree.cyr` hands out node bboxes for direct use with `aabb_*`.
+
+  This is the **same defect class as the `bsp_nearest_seg` sentinel fixed in
+  1.2.0**, and the library's own test suite already exercised world coordinates
+  of 40000/60000 in the query group — it was asserting a range `aabb_init`
+  could not represent. Seeds are now **±2^50**, named `AABB_EMPTY`.
+
+  The magnitude is bounded from **both** sides, which is the whole subtlety:
+  - **Not INT64_MIN/INT64_MAX.** `aabb_width` computes `RIGHT - LEFT`, and
+    `INT64_MIN - INT64_MAX` wraps to `+1`, so a fresh box would report width 1
+    while still satisfying `fuzz_aabb`'s `width >= 0` invariant.
+  - **Not 2^61 either** — the first magnitude tried, and it *overflows
+    `frustum_test_aabb`*. That function computes `lx = asr(LEFT - vx, 4)` and
+    then `fx_mul(lx, lnx)` where `lnx` reaches 2^12 for a unit normal, so the
+    product must stay under 2^63 and the sentinel under **2^55**. Measured at
+    2^61: the raw product came out as exactly **0** (the low 64 bits of 2^69),
+    which would silently flip a corner's half-plane sign and cull or un-cull a
+    fresh box arbitrarily. At 2^50 that same product is 2^58 — well inside
+    range, with 32× headroom under the ceiling.
+
+  A fresh box therefore still reports width 0, and `aabb_center_x` on one now
+  returns exactly **0**; the asymmetric ±2^31 pair returned **−1**.
+
+  **Documented consequence**: `aabb_init` now states its supported range —
+  `|coord| < 2^50` fixed (~1.7e10 world units). It cannot simply be raised,
+  for the frustum reason above, and 16.16 has only ~32768 world units of useful
+  precision regardless. The `fuzz_aabb` coordinate bands were set to straddle
+  the *old* 2^31 seed while staying under the new one, so the harness tests
+  inside the contract rather than past it.
+
+  *Behaviour change*: correct results now replace incorrect ones for
+  coordinates above 32767.99 world units. DOOM-range consumers (cyrius-doom)
+  were never in that range; kiran, aethersafha and phylax are not DOOM-bounded.
+
+- **`bsp_point_in_subsector` reported a point as INSIDE an empty set, and
+  `bsp_nearest_seg` returned a valid-looking index into nothing.** Both tested
+  `seg_count == 0` rather than `<= 0`, so a **negative** count skipped the loop
+  and fell through to the success path: `bsp_point_in_subsector(_, _, segs, -1)`
+  returned **1** (inside), and `bsp_nearest_seg(_, _, segs, -1)` returned **0**.
+  The containment one inverts in the more dangerous direction, since callers
+  branch on it for collision. Both now use `<= 0`. Checked and deliberately left
+  alone: `bsp_count_in_aabb` already returns 0 for a negative count, and
+  `bsp_check_sight` returns 1 ("visible"), the conservative direction for a
+  sight test — both are pinned by new assertions.
+
+- **`bsp_find_subsector` could hang forever, read out of bounds, or return a
+  garbage subsector.** `node_count` was passed but used only to pick the root —
+  nothing validated the child indices being followed. Three distinct failures,
+  all reachable from map data a consumer did not author:
+  1. **A cycle hung the process.** Proven with a 2-node cycle: it spins
+     indefinitely. The new test for this *hangs* the suite on 1.2.2 rather than
+     failing it — verified, exit 124 on a 45 s timeout.
+  2. **A child index past the array read arbitrary memory.**
+  3. **A NEGATIVE child was silently accepted as a LEAF.** Two's complement
+     sets bit 15, so `bsp_is_subsector(-5)` is 1 and `bsp_subsector_idx`
+     returned `-5 & 0x7FFF` = **32763**. No hang and no crash here — the caller
+     then indexed *its* subsector array with 32763. This one had to be rejected
+     where the child is read, because the loop condition had already classified
+     it as a leaf.
+
+  The walk is now bounded by `node_count` and range-checked. Valid trees are
+  unaffected; `find_subsector_3node` measures 45 ns, unchanged.
+
+- **`blockmap_cell_seg` took SIGSEGV on the value its own sibling returns.**
+  `blockmap_get_cell` is documented to return **0** for an out-of-range cell.
+  `blockmap_cell_count` already tolerated that 0; `blockmap_cell_seg`
+  dereferenced it — so the documented `get_cell` → `cell_seg` sequence crashed
+  on any out-of-range coordinate (reproduced: exit 139). It now returns −1, and
+  range-checks `idx` as well: an unchecked `idx` read into the *next* cell's
+  data and returned a segment that is not in this cell.
+
+- **`blockmap` silently discarded segments with no way to detect it.** A cell
+  holds at most `BM_CELL_MAX_SEGS` (16); past that `blockmap_add` rejects, and
+  `blockmap_insert_seg` ignored the rejection and always returned **0**. Dense
+  geometry hits this with entirely valid input — the segment is simply absent
+  from the index, so `blockmap_query_point` never reports it and the caller's
+  narrowphase never tests it. Measured on a random-geometry probe: **~3,800
+  dropped inserts per 2,000-iteration run, all previously invisible.**
+  `blockmap_insert_seg` now returns the **number of cells that rejected** the
+  insert (0 = fully indexed). The old return was a constant, so reading it is
+  new information rather than a changed contract.
+
+### Fixed — the fuzz harnesses were systematically under-sampling
+
+- **All three harnesses returned the raw LCG state, so `% n` correlated with
+  the call index.** A power-of-two LCG has period 2^(k+1) in bit k — bit 0
+  simply **alternates**. Instrumented `fuzz_aabb`: **every `% 10` draw came out
+  EVEN across 50,000 iterations**, so `np == 1` was *unreachable* and a
+  single-point box was never once constructed. `_fz_rand` now mixes the high
+  bits down (`x ^= x >> 31; x ^= x >> 17;` — `>>` being Cyrius's LOGICAL shift,
+  which is what a bit-mixer wants).
+
+- **`fuzz_aabb` could not reach the bug it should have caught, twice over.**
+  Its coordinates were `fx_from_int((r % 2000) - 1000)` — a maximum of ~65.5M
+  fixed, about **32× below** the old ±2^31 sentinel — and its only real
+  invariant was `width >= 0`, which a *corrupted* box satisfies. Coordinates now
+  span three bands (DOOM-scale, ~100k world units, and ±2^45 fixed — above the
+  old sentinel, below the new one) and the harness asserts the property that
+  actually pins them: **every point added to a box must be contained in it**,
+  plus a single-point box having zero width and height.
+
+  **Mutation-tested, which is the only thing that makes it a gate:** the new
+  harness is **RED on the 1.2.2 source** (exit 1, `FAIL: single-point box has
+  nonzero width`, on all three seeds tried) and **GREEN on 1.2.3**. The old
+  harness was green on both.
+
+### Changed — performance
+
+- **`blockmap_query_point`: 305 ns → 252 ns (−17 %).** Two changes, both
+  provably result-neutral. The inner loop called `blockmap_cell_count` and
+  `blockmap_cell_seg` per segment, but `cell` is provably non-zero there and
+  `i < n <= BM_CELL_MAX_SEGS`, so their guards could never fire — the loads are
+  now direct, dropping two calls and five branches per segment. And on reaching
+  `out_max` the loop kept scanning every remaining cell to store nothing; it now
+  returns immediately, which cannot change the returned count.
+
+### Measured and rejected
+
+- **Hoisting the loop-invariant ray deltas out of `bsp_check_sight`.** The sight
+  ray is fixed across the loop, so `bsp_seg_intersect` recomputes
+  `asr(tx - sx, 8)` / `asr(ty - sy, 8)` once **per wall** — 2 subs + 2 shifts of
+  provably wasted work per iteration. Implemented and benchmarked both ways:
+  sharing a pre-shifted helper (so `bsp_seg_intersect` delegates) gave
+  check_sight 55 → 50 ns but cost the core primitive
+  **seg_intersect_hit 53 → 59 ns, seg_intersect_miss 39 → 46 ns**; keeping
+  `bsp_seg_intersect` inline restored the primitive but left check_sight at
+  53 ns — **no better than baseline**, with the division-free intersection math
+  now duplicated. 4 wasted ops are real but invisible against ~30 ops of
+  per-wall work, and the loop early-returns on the first blocker. Reverted; the
+  measurement is recorded in the source so it is not re-raised.
+
+### Added — documentation
+
+- **Every public function is now documented: 33 undocumented → 0**
+  (`cyrius audit` docs stage reports `ok: docs complete`). `cyrius doc`
+  associates a comment with a function only when it is **directly adjacent** —
+  a single blank line between a banner comment and its `fn` made it invisible,
+  which is most of why the count was so high. Documentation is **provably
+  codegen-inert**: the compiled binary is byte-identical (same SHA256) before
+  and after the doc pass.
+- Contracts that were previously implicit are now stated: `fx_to_int` floors
+  toward negative infinity; `fx_mul` is not associative across a chain;
+  `fx_div` returns `FX_MAX` on divide-by-zero and cannot be distinguished from
+  a real `FX_MAX`; `_seg_check` requires a non-zero denominator (a zero one
+  falls through both branches and reports parallel segments as intersecting);
+  `blockmap_cell_x`/`_y` return unclamped indices; the `bsp_node_*` accessors
+  do no bounds checking; `blockmap_insert_seg` indexes by bounding box, not by
+  exact rasterisation.
+- `programs/test_bsp.cyr` documented and its stale build line fixed — it told
+  readers to pipe through `cc2`, a command as long-dead as the `cyrb` reference
+  fixed in 1.2.2. Its header now states plainly that it is a hand-run smoke test
+  that always exits 0 and gates nothing; `tests/bsp.tcyr` is the real suite.
+
+### Changed — toolchain and `asr()`
+
+The pin move costs **nothing** — the 6.5.19 and 6.5.20 binaries are
 **byte-identical** (same SHA256, 118,176 B, same 433 fns / 81,549 B dead-code
-accounting) — plus the first real payoff from having crossed into the 6.4.x/6.5.x
-band in 1.2.2: **`asr()` is now a one-line alias for the native `>>>` operator**,
-which BSP could not use while it was pinned to 6.3.5.
-
-### Changed
+accounting) — and `asr()` becomes the first real payoff from having crossed into
+the 6.4.x/6.5.x band in 1.2.2.
 
 - **Cyrius pin 6.5.19 → 6.5.20** (`cyrius.cyml`). **Zero growth tax and zero
   codegen change**: fresh-tree builds at both pins produce bit-identical
@@ -60,9 +236,15 @@ which BSP could not use while it was pinned to 6.3.5.
 
 ### Quality gates (on Cyrius 6.5.20)
 
-- **Tests**: 103 passed, 0 failed — including the seven explicit `asr` floor
-  assertions (`asr(-3,1) = -2`, `asr(-9,2) = -3`, `fx_to_int(-0.5) = -1`) that
-  pin the semantics the substitution had to preserve.
+- **Tests**: **136 passed, 0 failed** (was 103) — including the seven explicit
+  `asr` floor assertions (`asr(-3,1) = -2`, `asr(-9,2) = -3`,
+  `fx_to_int(-0.5) = -1`) that pin the semantics the `>>>` substitution had to
+  preserve, and a new **malformed-input hardening** group of 27 assertions
+  covering every audit fix above.
+- **The hardening group is mutation-tested against 1.2.2**: run there, the suite
+  prints the group header and then **hangs** (exit 124 on a 45 s timeout) at the
+  cyclic-tree assertion — the failure mode being pinned. The remaining
+  assertions fail on 1.2.2 rather than passing vacuously.
 - **`asr()` ≡ `>>>` differential**: **600,576 cases, 0 mismatches**. Every shift
   width 0–31 against 18 pathological values (0, ±1, ±3, ±65535, ±65536,
   ±2147483647, ±2ᶟ²,  −(2⁶³−1)), a 300K random sweep over ±2e9, and a further
@@ -73,25 +255,32 @@ which BSP could not use while it was pinned to 6.3.5.
   per-module checksums, compiled *unchanged* against both trees.
   **6 seeds × 100,000 iterations = 600,000 per build: every checksum identical,
   zero divergence.** Corpus spans sub-precision, normal-world, ±2e9 extreme and
-  degenerate/tiny coordinate bands.
+  degenerate/tiny coordinate bands — i.e. everything *below* the old ±2^31
+  `aabb_init` sentinel, which is precisely the range where the audit fixes are
+  required to change nothing. Above it, behaviour intentionally changes from
+  wrong to correct.
+- **Blockmap differential** (added because the API probe did not cover it):
+  query results — `blockmap_query_point` including the `out_max` truncation
+  path, `get_cell`, `cell_count` over the whole grid plus out-of-range
+  coordinates — are **bit-identical across all 6 seeds**, while the same runs
+  surface **~3,800 previously-invisible dropped inserts** each.
 - **Fuzz**: `cyrius fuzz` 3/3 pass (25K standard gate), plus a stress run of
-  **1,800,000 iterations** (3 harnesses × 3 seeds × 200K), 0 failures.
-- **Benches**: 13/13. `fx_mul` 11 ns, `blockmap_query` 305–307 ns, against
-  1.2.2's 12 ns / 311 ns. **Read as no regression, not as a win** — the deltas
-  are inside run-to-run noise on this box. The honest, repeatable measurement of
-  this change is the −128 B of emitted code.
+  **3,000,000 iterations** (3 harnesses × 5 seeds × 200K) with the corrected
+  PRNG — which reaches generator states no previous run could — **0 failures**.
+  The deep runs earned their keep: at 200K they initially failed on every seed,
+  correctly reporting that the first sentinel magnitude tried (2^61) did not
+  dominate the coordinate band being generated.
+- **Benches**: 13/13. `blockmap_query` **305 → 252 ns (−17 %)**, the one
+  repeatable performance change in this release. `fx_mul` 11 ns,
+  `find_subsector_3node` 45 ns (unchanged despite the new bounds checks),
+  `seg_intersect_hit` 52 ns, `check_sight_8walls` 51 ns. Everything except
+  blockmap_query is inside run-to-run noise and should be read as *no
+  regression*, not as a win.
 - **`cyrius audit`**: fmt clean, lint clean (0 warnings, 0 untracked deferrals),
-  tests 103/0, bench 1/0. **`cyrius vet`: 8 deps, 0 untrusted, 0 missing.**
-  `cyrius check dist/bsp.cyr`: ok.
-- **Bundle**: `cyrius distlib` regenerated `dist/bsp.cyr` (885 lines, v1.2.3).
-  The diff is confined to the version header and `fixed.cyr` — **no other module
-  moved a byte**.
-
-### Note for the next audit
-
-`cyrius audit`'s docs stage reports **33 undocumented public fns**. Not addressed
-here (this release is deliberately narrow); recorded so the upcoming full audit
-starts from a known number.
+  **docs `ok: docs complete`**, tests 130/0, bench 1/0. **`cyrius vet`: 8 deps,
+  0 untrusted, 0 missing.** `cyrius check dist/bsp.cyr`: ok.
+- **Bundle**: `cyrius distlib` regenerated `dist/bsp.cyr` (v1.2.3). Re-running
+  `distlib` reproduces it byte-for-byte.
 
 ## [1.2.2] - 2026-08-11 — Cyrius 6.5.19 catch-up
 

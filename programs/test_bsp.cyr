@@ -1,5 +1,13 @@
-# test_bsp.cyr -- BSP library test
-# Build: cat programs/test_bsp.cyr | cc2 > build/test_bsp && chmod +x build/test_bsp
+# test_bsp.cyr -- BSP library smoke test (manual, eyeball-the-output)
+#
+# Build + run:
+#   cyrius build programs/test_bsp.cyr build/test_bsp && ./build/test_bsp
+#
+# This is NOT the test suite. tests/bsp.tcyr is: 103 real assertions that
+# fail the build when they break. This program only PRINTS values next to
+# their expected text and always exits 0, so it cannot gate anything. It is
+# kept as a hand-runnable sanity check that the public API links and returns
+# plausible values -- e.g. when bringing up a new target or toolchain.
 
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -8,6 +16,7 @@ include "lib/fmt.cyr"
 
 include "src/lib.cyr"
 
+# Smoke-check 16.16 arithmetic: 10*3 and 10/3 via fx_mul / fx_div.
 fn test_fixed() {
     syscall(1, 1, "test fixed: ", 12);
     var a = fx_from_int(10);
@@ -21,6 +30,7 @@ fn test_fixed() {
     return 0;
 }
 
+# Smoke-check AABB construction, dimensions, and point containment.
 fn test_aabb() {
     syscall(1, 1, "test aabb: ", 11);
     var box[32];
@@ -43,6 +53,7 @@ fn test_aabb() {
     return 0;
 }
 
+# Smoke-check segment intersection: one crossing pair, one parallel pair.
 fn test_intersect() {
     syscall(1, 1, "test intersect: ", 16);
     # Crossing segments: (0,0)-(10,10) and (0,10)-(10,0)
@@ -60,6 +71,7 @@ fn test_intersect() {
     return 0;
 }
 
+# Smoke-check that two points straddling a line classify to opposite sides.
 fn test_point_side() {
     syscall(1, 1, "test point_side: ", 17);
     # Line from (0,0) going right (dx=1, dy=0)
@@ -78,6 +90,7 @@ fn test_point_side() {
     return 0;
 }
 
+# Smoke-check blockmap insert + cell lookup for a single segment.
 fn test_blockmap() {
     syscall(1, 1, "test blockmap: ", 15);
     alloc_init();
@@ -96,6 +109,7 @@ fn test_blockmap() {
     return 0;
 }
 
+# Run every smoke check in order. Always exits 0 -- read the output.
 fn main() {
     test_fixed();
     test_aabb();

@@ -19,9 +19,14 @@ enum BspFixed {
     FX_SHIFT = 16;
 }
 
+# Arithmetic (sign-preserving) right shift: FLOOR division of `val` by 2^bits.
+# This is what C's `>>` does on signed ints, and what DOOM's fixed-point and
+# coordinate math assume. Negatives round toward NEGATIVE INFINITY, so
+# asr(-3, 1) is -2, not -1. `bits` must be in 0..63.
+#
+# Prefer this over a bare `>>` on any signed value — Cyrius `>>` is LOGICAL.
 fn asr(val, bits) {
-    # Arithmetic (sign-preserving) right shift = FLOOR division by 2^bits, matching
-    # C's `>>` on signed ints (what DOOM's fixed-point + coord math assume).
+    # Implementation note, not API contract.
     #
     # This is now a thin alias for the NATIVE `>>>` operator (Cyrius v6.4.46).
     # BSP was pinned to 6.3.5 until 1.2.2, which predates `>>>`, so 1.1.0-1.2.2
@@ -45,10 +50,26 @@ fn asr(val, bits) {
     return val >>> bits;
 }
 
+# Convert a plain integer to 16.16 fixed-point. fx_from_int(1) == FX_ONE.
+# No range check: |n| above 32767 overflows the 16.16 representable range.
 fn fx_from_int(n) { return n << 16; }
+
+# Convert 16.16 fixed-point back to a plain integer, rounding toward
+# NEGATIVE INFINITY (floor). fx_to_int(-32768) is -1, not 0.
 fn fx_to_int(f) { return asr(f, 16); }
+
+# Multiply two 16.16 fixed-point values. The intermediate product is 64-bit,
+# so |a*b| up to 2^63 is safe; each result is floored independently, so
+# fx_mul is NOT associative across a chain of products.
 fn fx_mul(a, b) { return asr(a * b, 16); }
 
+# Divide two 16.16 fixed-point values. Returns FX_MAX on divide-by-zero rather
+# than trapping — callers that need to distinguish a real FX_MAX result from
+# the error sentinel must check the divisor themselves.
+#
+# Large numerators are scaled down by 8 bits BEFORE the shift-left, costing
+# precision but avoiding overflow; if that scaling collapses the divisor to
+# zero, FX_MAX is returned as well.
 fn fx_div(a, b) {
     if (b == 0) { return FX_MAX; }
     var aa = a;
@@ -59,9 +80,17 @@ fn fx_div(a, b) {
     return (aa << 16) / bb;
 }
 
+# Absolute value. Scale-agnostic — works on fixed-point and plain integers.
 fn fx_abs(f) { if (f < 0) { return -f; } return f; }
+
+# Lesser of two values. Scale-agnostic.
 fn fx_min(a, b) { if (a < b) { return a; } return b; }
+
+# Greater of two values. Scale-agnostic.
 fn fx_max(a, b) { if (a > b) { return a; } return b; }
+
+# Clamp `f` into [lo, hi]. Scale-agnostic. Callers must pass lo <= hi;
+# an inverted range returns `lo`.
 fn fx_clamp(f, lo, hi) { if (f < lo) { return lo; } if (f > hi) { return hi; } return f; }
 
 # --- aabb.cyr ---
@@ -82,14 +111,53 @@ enum BBox {
     AABB_LEFT = 16;
     AABB_RIGHT = 24;
     AABB_SIZE = 32;
+    # Inverted seeds for an "empty" box, +-2^61.
+    #
+    # These were +-2^31 through 1.2.2, which is the same defect class as the
+    # bsp_nearest_seg sentinel fixed in 1.2.0: coordinates here are 16.16 in
+    # 64-BIT integers, so any world coordinate above 32767.99 produces a fixed
+    # value LARGER than a 2^31 seed and aabb_add_point's comparisons never
+    # fire. A box built from the single point (40000, 40000) measured 7232
+    # world units wide and reported (35000, 35000) as inside it.
+    #
+    # NOT INT64_MIN/INT64_MAX: aabb_width computes RIGHT - LEFT, and
+    # INT64_MIN - INT64_MAX wraps to +1, so a fresh box would report width 1
+    # while still passing fuzz_aabb's "width >= 0" invariant. At +-2^61 that
+    # subtraction is -2^62 — representable and negative — so aabb_width and
+    # aabb_height still return 0 on a fresh box, and aabb_center_x now returns
+    # exactly 0 instead of the -1 the asymmetric 2^31 pair produced.
+    # Stored as the MAGNITUDE only: a Cyrius enum initialiser must be a
+    # non-negative literal (`AABB_EMPTY = -1125...` is "expected number,
+    # got '-'"), so the negative seed is written `0 - AABB_EMPTY` below.
+    #
+    # 2^50, NOT something larger. The upper bound is set by frustum.cyr, not by
+    # aabb.cyr: frustum_test_aabb computes `lx = asr(LEFT - vx, 4)` and then
+    # `fx_mul(lx, lnx)` where `lnx = asr(normal, 4)` reaches 2^12 for a unit
+    # normal. That product must stay under 2^63, so |sentinel| must be under
+    # 2^55. A 2^61 seed overflows it — measured: the raw product came out as
+    # exactly 0 (the low 64 bits of 2^69), which would silently flip a corner's
+    # half-plane sign and cull or un-cull a fresh box arbitrarily.
+    #
+    # 2^50 fixed is ~1.7e10 world units — far past any plausible map, and 32x
+    # under the frustum ceiling.
+    AABB_EMPTY = 1125899906842624;
 }
 
-# Initialize an AABB to "empty" (inverted extremes)
+# Initialize an AABB to "empty" (inverted extremes), ready for aabb_add_point.
+# A fresh box has width 0, height 0, centre (0,0), and contains no point.
+#
+# SUPPORTED COORDINATE RANGE: |coord| < AABB_EMPTY (2^50 fixed, ~1.7e10 world
+# units). A coordinate at or beyond the sentinel does not beat it, so
+# aabb_add_point silently leaves that edge at the sentinel and the box is
+# wrong. The bound cannot simply be raised — frustum_test_aabb multiplies
+# `asr(edge, 4)` by a normal of up to 2^12 and needs the sentinel under 2^55.
+# 16.16 fixed-point has ~32768 world units of useful precision anyway
+# (see fx_from_int), so this ceiling is far past any real map.
 fn aabb_init(box) {
-    store64(box + AABB_TOP, -2147483648);
-    store64(box + AABB_BOTTOM, 2147483647);
-    store64(box + AABB_LEFT, 2147483647);
-    store64(box + AABB_RIGHT, -2147483648);
+    store64(box + AABB_TOP, 0 - AABB_EMPTY);
+    store64(box + AABB_BOTTOM, AABB_EMPTY);
+    store64(box + AABB_LEFT, AABB_EMPTY);
+    store64(box + AABB_RIGHT, 0 - AABB_EMPTY);
     return 0;
 }
 
@@ -183,7 +251,6 @@ fn aabb_center_y(box) {
 #
 # Uses cross product: (px-lx)*ldy - (py-ly)*ldx
 # Positive = right, negative = left
-
 fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
     var dx = px - lx;
     var dy = py - ly;
@@ -207,13 +274,15 @@ fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
 # ================================================================
 # Segment-segment intersection
 # ================================================================
-# Test if segment (ax1,ay1)-(ax2,ay2) intersects (bx1,by1)-(bx2,by2).
-# Returns 1 if they intersect, 0 if not.
-#
-# Uses parametric form: find t1, t2 where
-#   A1 + t1*(A2-A1) = B1 + t2*(B2-B1)
-# Intersection if 0 <= t1 <= 1 and 0 <= t2 <= 1.
 
+# Internal: range-check both parametric numerators against a shared
+# denominator without dividing, so a degenerate input cannot raise SIGFPE.
+# Tests 0 <= t1_num/denom <= 1 and the same for t2_num, with the comparison
+# sense flipped when denom is negative.
+#
+# PRECONDITION: denom != 0. A zero denominator falls through both branches and
+# returns 1 (parallel segments reported as intersecting) — every caller must
+# reject denom == 0 first, as bsp_seg_intersect does.
 fn _seg_check(denom, t1_num, t2_num) {
     if (denom > 0) {
         if (t1_num < 0) { return 0; }
@@ -230,6 +299,21 @@ fn _seg_check(denom, t1_num, t2_num) {
     return 1;
 }
 
+# Test whether segment (ax1,ay1)-(ax2,ay2) crosses (bx1,by1)-(bx2,by2).
+# Returns 1 if they intersect, 0 if not.
+#
+# Uses the parametric form -- find t1, t2 where
+#   A1 + t1*(A2-A1) = B1 + t2*(B2-B1)
+# with an intersection when 0 <= t1 <= 1 and 0 <= t2 <= 1. Division-free: the
+# t-ranges are checked against the denominator by sign, never divided, so
+# parallel and zero-length inputs return 0 rather than trapping.
+#
+# Endpoint-touching counts as an intersection (the range checks are
+# inclusive). Collinear overlapping segments have a zero denominator and are
+# therefore reported as NOT intersecting.
+#
+# All operands are pre-shifted by 8 bits, so segments whose extent is below
+# ~1/256 of a world unit collapse and report no intersection.
 fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
     # Pre-shift each delta by 8 once (asr is signed, deterministic) — the
     # un-shifted deltas are used nowhere else, so this is value-identical to
@@ -259,8 +343,22 @@ fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
 # twosided_flags = pointer to array of i64 (1=two-sided, 0=one-sided)
 #
 # Returns 1 if visible, 0 if blocked.
-
 fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
+    # MEASURED AND REJECTED (1.2.3 audit): the sight ray is fixed across the
+    # loop, so `asr(tx - sx, 8)` / `asr(ty - sy, 8)` are loop-invariant and
+    # bsp_seg_intersect recomputes them once per wall — 2 subs + 2 shifts of
+    # provably wasted work per iteration. Hoisting them into a pre-shifted
+    # helper was implemented and benchmarked BOTH ways:
+    #   - helper shared with bsp_seg_intersect (which then delegates):
+    #     check_sight 55 -> 50 ns, but seg_intersect_hit 53 -> 59 ns and
+    #     seg_intersect_miss 39 -> 46 ns. The added call costs the core
+    #     primitive more than the loop saves.
+    #   - helper used only here, bsp_seg_intersect kept inline: primitive back
+    #     to 53/39, but check_sight measured 53 ns — no better than baseline,
+    #     and the division-free intersection math is now duplicated.
+    # 4 wasted ops are real but invisible against ~30 ops of per-wall work, and
+    # the loop early-returns on the first blocker. Not worth a call penalty on
+    # the primitive or a second copy of correctness-critical math.
     for (var i = 0; i < wall_count; i += 1) {
         # Skip two-sided walls (they don't block sight)
         if (load64(twosided_flags + i * 8) != 0) { continue; }
@@ -285,7 +383,6 @@ fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
 # (sx1,sy1)-(sx2,sy2). Returns the parametric t along the ray
 # where intersection occurs (0..FX_MAX), or -1 if no hit.
 # The actual intersection point = (ox + t*dx, oy + t*dy).
-
 fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
     # Pre-shift each operand by 8 once (asr is signed, deterministic) — the
     # un-shifted dx/dy/sdx/sdy/abx/aby feed only these products, so this is
@@ -325,7 +422,6 @@ fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
 # Returns the approximate distance from point (px,py) to the
 # nearest point on segment (sx1,sy1)-(sx2,sy2).
 # Uses projection + DOOM-style approximate distance.
-
 fn bsp_point_seg_dist(px, py, sx1, sy1, sx2, sy2) {
     var sdx = sx2 - sx1;
     var sdy = sy2 - sy1;
@@ -413,16 +509,34 @@ fn bsp_subsector_idx(child) {
     return child & 0x7FFF;
 }
 
-# Get node partition line fields
+# Partition line origin X of node `idx` (fixed-point).
+# No bounds check: `idx` must be in 0..node_count-1.
 fn bsp_node_x(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_X); }
+
+# Partition line origin Y of node `idx` (fixed-point). No bounds check.
 fn bsp_node_y(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_Y); }
+
+# Partition line direction X of node `idx` (fixed-point). No bounds check.
 fn bsp_node_dx(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_DX); }
+
+# Partition line direction Y of node `idx` (fixed-point). No bounds check.
 fn bsp_node_dy(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_DY); }
+
+# Right (front) child reference of node `idx`. Test it with bsp_is_subsector:
+# if set, it is a leaf and bsp_subsector_idx extracts the subsector number;
+# otherwise it is another node index. No bounds check.
 fn bsp_node_child_r(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_CHILD_R); }
+
+# Left (back) child reference of node `idx`. Same encoding as the right child.
+# No bounds check.
 fn bsp_node_child_l(nodes, idx) { return load64(nodes + idx * BSP_NODE_SIZE + BSP_NODE_CHILD_L); }
 
-# Get pointer to a node's child bounding box
+# Pointer to the right child's 32-byte bounding box inside node `idx`.
+# Usable directly with the aabb_* functions. No bounds check.
 fn bsp_node_bbox_r(nodes, idx) { return nodes + idx * BSP_NODE_SIZE + BSP_NODE_BBOX_R; }
+
+# Pointer to the left child's 32-byte bounding box inside node `idx`.
+# Usable directly with the aabb_* functions. No bounds check.
 fn bsp_node_bbox_l(nodes, idx) { return nodes + idx * BSP_NODE_SIZE + BSP_NODE_BBOX_L; }
 
 # Set a node's partition line
@@ -468,7 +582,6 @@ fn bsp_node_set_children(nodes, idx, right, left) {
 # node_idx = which node
 # px, py = point position (fixed-point)
 # Returns: 0 = right/front, 1 = left/back
-
 fn bsp_point_on_side(nodes, node_idx, px, py) {
     # Compute the node base once instead of four accessor calls that each
     # recompute node_idx * BSP_NODE_SIZE. Field offsets match the accessors
@@ -489,19 +602,40 @@ fn bsp_point_on_side(nodes, node_idx, px, py) {
 # nodes = pointer to nodes array
 # node_count = number of nodes (root = node_count - 1)
 # px, py = point position (fixed-point)
-
 fn bsp_find_subsector(nodes, node_count, px, py) {
     if (node_count == 0) { return 0; }
 
     var idx = node_count - 1;
+    if (idx < 0) { return 0; }
 
+    # Bound the walk by node_count. A well-formed tree visits each node at most
+    # once and terminates at a subsector leaf, so none of these guards fire on
+    # valid input — but `node_count` was previously used only to pick the root,
+    # and nothing checked the child indices we follow. Three malformed-input
+    # failures were reachable, and consumers build these arrays from map files
+    # they did not author, so none of them are hypothetical:
+    #
+    #   1. A CYCLE hung here forever (a 2-node cycle spins indefinitely).
+    #   2. A child index past the end of the array read arbitrary memory.
+    #   3. A NEGATIVE child was silently accepted as a LEAF: two's complement
+    #      sets bit 15, so bsp_is_subsector(-5) is 1 and bsp_subsector_idx
+    #      returned -5 & 0x7FFF = 32763. No hang, no crash here — the caller
+    #      then indexed its subsector array with 32763 and read out of bounds.
+    #      That one has to be rejected where the child is READ, because the
+    #      loop condition would already have classified it as a leaf.
+    var steps = node_count;
     while (bsp_is_subsector(idx) == 0) {
+        if (idx >= node_count) { return 0; }
+        if (steps <= 0) { return 0; }
+        steps -= 1;
+
         var side = bsp_point_on_side(nodes, idx, px, py);
         if (side == 0) {
             idx = bsp_node_child_r(nodes, idx);
         } else {
             idx = bsp_node_child_l(nodes, idx);
         }
+        if (idx < 0) { return 0; }
     }
 
     return bsp_subsector_idx(idx);
@@ -514,7 +648,6 @@ fn bsp_find_subsector(nodes, node_count, px, py) {
 # Simple test: is the bbox on the same side as the viewpoint,
 # or does it straddle the partition line?
 # Returns 1 if potentially visible, 0 if fully behind.
-
 fn bsp_bbox_visible(bbox, vx, vy, vangle_cos, vangle_sin, fov_half) {
     # For now: always visible (conservative). Full frustum culling lives in
     # frustum.cyr (frustum_test_aabb); this remains a placeholder. The
@@ -541,9 +674,11 @@ fn bsp_bbox_visible(bbox, vx, vy, vangle_cos, vangle_sin, fov_half) {
 #
 # A point is inside if it's on the same side of all segments
 # (assuming segments form a convex polygon wound consistently).
-
 fn bsp_point_in_subsector(px, py, segs, seg_count) {
-    if (seg_count == 0) { return 0; }
+    # `<= 0`, not `== 0`. A NEGATIVE count skipped the loop and fell through to
+    # `return 1` — reporting the point as INSIDE an empty set, the dangerous
+    # direction for a containment test callers branch on for collision.
+    if (seg_count <= 0) { return 0; }
 
     var first_side = -1;
 
@@ -573,9 +708,10 @@ fn bsp_point_in_subsector(px, py, segs, seg_count) {
 # segs = pointer to segment array (32 bytes each)
 # seg_count = number of segments
 # Returns segment index, or -1 if no segments.
-
 fn bsp_nearest_seg(px, py, segs, seg_count) {
-    if (seg_count == 0) { return -1; }
+    # `<= 0`, not `== 0`. A NEGATIVE count skipped the loop and returned the
+    # best_idx seed of 0 — a valid-looking index into an array with no entries.
+    if (seg_count <= 0) { return -1; }
 
     var best_idx = 0;
     # Seed with INT64_MAX, not 2147483647 (=2^31-1, ~32768.0 world units):
@@ -608,7 +744,6 @@ fn bsp_nearest_seg(px, py, segs, seg_count) {
 # ================================================================
 # Given an array of entity positions (16 bytes each: x, y),
 # count how many fall within the given bounding box.
-
 fn bsp_count_in_aabb(box, entities, entity_count) {
     var count = 0;
     for (var i = 0; i < entity_count; i += 1) {
@@ -673,7 +808,10 @@ fn blockmap_init(buf, origin_x, origin_y, cell_size, cols, rows) {
     return buf;
 }
 
-# Convert world position to cell coordinates
+# Convert a world X coordinate to a grid column index.
+# Returns 0 if cell_size is 0. The result is NOT clamped to the grid — it can
+# be negative or >= cols for positions outside the blockmap; callers that index
+# with it must clamp (blockmap_add and blockmap_get_cell both range-check).
 fn blockmap_cell_x(bm, wx) {
     var ox = load64(bm + BM_ORIGIN_X);
     var cs = load64(bm + BM_CELL_SIZE);
@@ -681,6 +819,8 @@ fn blockmap_cell_x(bm, wx) {
     return fx_to_int(fx_div(wx - ox, cs));
 }
 
+# Convert a world Y coordinate to a grid row index. Same contract as
+# blockmap_cell_x: returns 0 if cell_size is 0, and the result is unclamped.
 fn blockmap_cell_y(bm, wy) {
     var oy = load64(bm + BM_ORIGIN_Y);
     var cs = load64(bm + BM_CELL_SIZE);
@@ -688,7 +828,15 @@ fn blockmap_cell_y(bm, wy) {
     return fx_to_int(fx_div(wy - oy, cs));
 }
 
-# Add a segment index to the cell at (col, row)
+# Add a segment index to the cell at (col, row).
+# Returns 1 if stored, 0 if rejected.
+#
+# Rejection happens for an out-of-range (col, row) OR when the cell already
+# holds BM_CELL_MAX_SEGS (16) segments. The second case is SILENT DATA LOSS
+# that a dense map hits with entirely valid input: the segment simply is not
+# in the index, and a later blockmap_query_point will not report it, so the
+# caller's narrowphase never tests it. Check this return value, or check the
+# drop count from blockmap_insert_seg.
 fn blockmap_add(bm, col, row, seg_idx) {
     var cols = load64(bm + BM_COLS);
     var rows = load64(bm + BM_ROWS);
@@ -706,8 +854,18 @@ fn blockmap_add(bm, col, row, seg_idx) {
     return 1;
 }
 
-# Insert a segment into all cells it overlaps.
+# Insert a segment into every cell its bounding box overlaps.
 # Segment endpoints: (x1,y1)-(x2,y2) in fixed-point.
+#
+# Returns the number of cells that REJECTED the insertion — 0 means fully
+# indexed. A non-zero result means those cells were already at
+# BM_CELL_MAX_SEGS and this segment is missing from them, so queries over
+# that area will not return it. Before 1.2.3 this always returned 0 and the
+# loss was undetectable; the value was constant, so reading it is new
+# information rather than a changed contract.
+#
+# Note this inserts by bounding box, not by exact rasterisation: a diagonal
+# segment is added to cells its bbox covers but the segment itself misses.
 fn blockmap_insert_seg(bm, seg_idx, x1, y1, x2, y2) {
     var c1 = blockmap_cell_x(bm, fx_min(x1, x2));
     var c2 = blockmap_cell_x(bm, fx_max(x1, x2));
@@ -721,12 +879,13 @@ fn blockmap_insert_seg(bm, seg_idx, x1, y1, x2, y2) {
     if (c2 >= cols) { c2 = cols - 1; }
     if (r2 >= rows) { r2 = rows - 1; }
 
+    var dropped = 0;
     for (var r = r1; r <= r2; r += 1) {
         for (var c = c1; c <= c2; c += 1) {
-            blockmap_add(bm, c, r, seg_idx);
+            if (blockmap_add(bm, c, r, seg_idx) == 0) { dropped += 1; }
         }
     }
-    return 0;
+    return dropped;
 }
 
 # Query: get pointer to cell data at (col, row).
@@ -747,8 +906,18 @@ fn blockmap_cell_count(cell) {
     return load64(cell);
 }
 
-# Query: get segment index from cell
+# Query: get segment index `idx` from a cell, or -1 if the request is invalid.
+#
+# Guarded to match its sibling blockmap_cell_count, which already tolerates the
+# 0 that blockmap_get_cell returns for an out-of-range cell. Before 1.2.3 this
+# function dereferenced that 0 and took SIGSEGV, so the documented
+# get_cell -> cell_seg sequence could crash on any out-of-range coordinate.
+# `idx` is range-checked too: an unchecked idx reads into the NEXT cell's data
+# and silently returns a segment that is not in this cell.
 fn blockmap_cell_seg(cell, idx) {
+    if (cell == 0) { return -1; }
+    if (idx < 0) { return -1; }
+    if (idx >= BM_CELL_MAX_SEGS) { return -1; }
     return load64(cell + 8 + idx * 8);
 }
 
@@ -782,12 +951,15 @@ fn blockmap_query_point(bm, px, py, radius, out_buf, out_max) {
             # two redundant cols/rows reloads, four bounds checks, and the
             # never-false cell != 0 guard.
             var cell = bm + BM_DATA + (r * cols + c) * BM_CELL_STRIDE;
-            var n = blockmap_cell_count(cell);
+            var n = load64(cell);
             for (var i = 0; i < n; i += 1) {
-                if (out_count < out_max) {
-                    store64(out_buf + out_count * 8, blockmap_cell_seg(cell, i));
-                    out_count += 1;
-                }
+                # `cell` is provably non-zero and `i < n <= BM_CELL_MAX_SEGS`
+                # (blockmap_add caps the stored count), so the guards inside
+                # blockmap_cell_seg / blockmap_cell_count can never fire here —
+                # load directly and skip two calls and five branches per segment.
+                if (out_count >= out_max) { return out_count; }
+                store64(out_buf + out_count * 8, load64(cell + 8 + i * 8));
+                out_count += 1;
             }
         }
     }

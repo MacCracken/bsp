@@ -47,7 +47,10 @@ fn blockmap_init(buf, origin_x, origin_y, cell_size, cols, rows) {
     return buf;
 }
 
-# Convert world position to cell coordinates
+# Convert a world X coordinate to a grid column index.
+# Returns 0 if cell_size is 0. The result is NOT clamped to the grid — it can
+# be negative or >= cols for positions outside the blockmap; callers that index
+# with it must clamp (blockmap_add and blockmap_get_cell both range-check).
 fn blockmap_cell_x(bm, wx) {
     var ox = load64(bm + BM_ORIGIN_X);
     var cs = load64(bm + BM_CELL_SIZE);
@@ -55,6 +58,8 @@ fn blockmap_cell_x(bm, wx) {
     return fx_to_int(fx_div(wx - ox, cs));
 }
 
+# Convert a world Y coordinate to a grid row index. Same contract as
+# blockmap_cell_x: returns 0 if cell_size is 0, and the result is unclamped.
 fn blockmap_cell_y(bm, wy) {
     var oy = load64(bm + BM_ORIGIN_Y);
     var cs = load64(bm + BM_CELL_SIZE);
@@ -62,7 +67,15 @@ fn blockmap_cell_y(bm, wy) {
     return fx_to_int(fx_div(wy - oy, cs));
 }
 
-# Add a segment index to the cell at (col, row)
+# Add a segment index to the cell at (col, row).
+# Returns 1 if stored, 0 if rejected.
+#
+# Rejection happens for an out-of-range (col, row) OR when the cell already
+# holds BM_CELL_MAX_SEGS (16) segments. The second case is SILENT DATA LOSS
+# that a dense map hits with entirely valid input: the segment simply is not
+# in the index, and a later blockmap_query_point will not report it, so the
+# caller's narrowphase never tests it. Check this return value, or check the
+# drop count from blockmap_insert_seg.
 fn blockmap_add(bm, col, row, seg_idx) {
     var cols = load64(bm + BM_COLS);
     var rows = load64(bm + BM_ROWS);
@@ -80,8 +93,18 @@ fn blockmap_add(bm, col, row, seg_idx) {
     return 1;
 }
 
-# Insert a segment into all cells it overlaps.
+# Insert a segment into every cell its bounding box overlaps.
 # Segment endpoints: (x1,y1)-(x2,y2) in fixed-point.
+#
+# Returns the number of cells that REJECTED the insertion — 0 means fully
+# indexed. A non-zero result means those cells were already at
+# BM_CELL_MAX_SEGS and this segment is missing from them, so queries over
+# that area will not return it. Before 1.2.3 this always returned 0 and the
+# loss was undetectable; the value was constant, so reading it is new
+# information rather than a changed contract.
+#
+# Note this inserts by bounding box, not by exact rasterisation: a diagonal
+# segment is added to cells its bbox covers but the segment itself misses.
 fn blockmap_insert_seg(bm, seg_idx, x1, y1, x2, y2) {
     var c1 = blockmap_cell_x(bm, fx_min(x1, x2));
     var c2 = blockmap_cell_x(bm, fx_max(x1, x2));
@@ -95,12 +118,13 @@ fn blockmap_insert_seg(bm, seg_idx, x1, y1, x2, y2) {
     if (c2 >= cols) { c2 = cols - 1; }
     if (r2 >= rows) { r2 = rows - 1; }
 
+    var dropped = 0;
     for (var r = r1; r <= r2; r += 1) {
         for (var c = c1; c <= c2; c += 1) {
-            blockmap_add(bm, c, r, seg_idx);
+            if (blockmap_add(bm, c, r, seg_idx) == 0) { dropped += 1; }
         }
     }
-    return 0;
+    return dropped;
 }
 
 # Query: get pointer to cell data at (col, row).
@@ -121,8 +145,18 @@ fn blockmap_cell_count(cell) {
     return load64(cell);
 }
 
-# Query: get segment index from cell
+# Query: get segment index `idx` from a cell, or -1 if the request is invalid.
+#
+# Guarded to match its sibling blockmap_cell_count, which already tolerates the
+# 0 that blockmap_get_cell returns for an out-of-range cell. Before 1.2.3 this
+# function dereferenced that 0 and took SIGSEGV, so the documented
+# get_cell -> cell_seg sequence could crash on any out-of-range coordinate.
+# `idx` is range-checked too: an unchecked idx reads into the NEXT cell's data
+# and silently returns a segment that is not in this cell.
 fn blockmap_cell_seg(cell, idx) {
+    if (cell == 0) { return -1; }
+    if (idx < 0) { return -1; }
+    if (idx >= BM_CELL_MAX_SEGS) { return -1; }
     return load64(cell + 8 + idx * 8);
 }
 
@@ -156,12 +190,15 @@ fn blockmap_query_point(bm, px, py, radius, out_buf, out_max) {
             # two redundant cols/rows reloads, four bounds checks, and the
             # never-false cell != 0 guard.
             var cell = bm + BM_DATA + (r * cols + c) * BM_CELL_STRIDE;
-            var n = blockmap_cell_count(cell);
+            var n = load64(cell);
             for (var i = 0; i < n; i += 1) {
-                if (out_count < out_max) {
-                    store64(out_buf + out_count * 8, blockmap_cell_seg(cell, i));
-                    out_count += 1;
-                }
+                # `cell` is provably non-zero and `i < n <= BM_CELL_MAX_SEGS`
+                # (blockmap_add caps the stored count), so the guards inside
+                # blockmap_cell_seg / blockmap_cell_count can never fire here —
+                # load directly and skip two calls and five branches per segment.
+                if (out_count >= out_max) { return out_count; }
+                store64(out_buf + out_count * 8, load64(cell + 8 + i * 8));
+                out_count += 1;
             }
         }
     }

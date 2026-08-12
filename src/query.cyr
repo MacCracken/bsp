@@ -13,9 +13,11 @@
 #
 # A point is inside if it's on the same side of all segments
 # (assuming segments form a convex polygon wound consistently).
-
 fn bsp_point_in_subsector(px, py, segs, seg_count) {
-    if (seg_count == 0) { return 0; }
+    # `<= 0`, not `== 0`. A NEGATIVE count skipped the loop and fell through to
+    # `return 1` — reporting the point as INSIDE an empty set, the dangerous
+    # direction for a containment test callers branch on for collision.
+    if (seg_count <= 0) { return 0; }
 
     var first_side = -1;
 
@@ -45,9 +47,10 @@ fn bsp_point_in_subsector(px, py, segs, seg_count) {
 # segs = pointer to segment array (32 bytes each)
 # seg_count = number of segments
 # Returns segment index, or -1 if no segments.
-
 fn bsp_nearest_seg(px, py, segs, seg_count) {
-    if (seg_count == 0) { return -1; }
+    # `<= 0`, not `== 0`. A NEGATIVE count skipped the loop and returned the
+    # best_idx seed of 0 — a valid-looking index into an array with no entries.
+    if (seg_count <= 0) { return -1; }
 
     var best_idx = 0;
     # Seed with INT64_MAX, not 2147483647 (=2^31-1, ~32768.0 world units):
@@ -80,7 +83,6 @@ fn bsp_nearest_seg(px, py, segs, seg_count) {
 # ================================================================
 # Given an array of entity positions (16 bytes each: x, y),
 # count how many fall within the given bounding box.
-
 fn bsp_count_in_aabb(box, entities, entity_count) {
     var count = 0;
     for (var i = 0; i < entity_count; i += 1) {

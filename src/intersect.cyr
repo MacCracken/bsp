@@ -13,7 +13,6 @@
 #
 # Uses cross product: (px-lx)*ldy - (py-ly)*ldx
 # Positive = right, negative = left
-
 fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
     var dx = px - lx;
     var dy = py - ly;
@@ -37,13 +36,15 @@ fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
 # ================================================================
 # Segment-segment intersection
 # ================================================================
-# Test if segment (ax1,ay1)-(ax2,ay2) intersects (bx1,by1)-(bx2,by2).
-# Returns 1 if they intersect, 0 if not.
-#
-# Uses parametric form: find t1, t2 where
-#   A1 + t1*(A2-A1) = B1 + t2*(B2-B1)
-# Intersection if 0 <= t1 <= 1 and 0 <= t2 <= 1.
 
+# Internal: range-check both parametric numerators against a shared
+# denominator without dividing, so a degenerate input cannot raise SIGFPE.
+# Tests 0 <= t1_num/denom <= 1 and the same for t2_num, with the comparison
+# sense flipped when denom is negative.
+#
+# PRECONDITION: denom != 0. A zero denominator falls through both branches and
+# returns 1 (parallel segments reported as intersecting) — every caller must
+# reject denom == 0 first, as bsp_seg_intersect does.
 fn _seg_check(denom, t1_num, t2_num) {
     if (denom > 0) {
         if (t1_num < 0) { return 0; }
@@ -60,6 +61,21 @@ fn _seg_check(denom, t1_num, t2_num) {
     return 1;
 }
 
+# Test whether segment (ax1,ay1)-(ax2,ay2) crosses (bx1,by1)-(bx2,by2).
+# Returns 1 if they intersect, 0 if not.
+#
+# Uses the parametric form -- find t1, t2 where
+#   A1 + t1*(A2-A1) = B1 + t2*(B2-B1)
+# with an intersection when 0 <= t1 <= 1 and 0 <= t2 <= 1. Division-free: the
+# t-ranges are checked against the denominator by sign, never divided, so
+# parallel and zero-length inputs return 0 rather than trapping.
+#
+# Endpoint-touching counts as an intersection (the range checks are
+# inclusive). Collinear overlapping segments have a zero denominator and are
+# therefore reported as NOT intersecting.
+#
+# All operands are pre-shifted by 8 bits, so segments whose extent is below
+# ~1/256 of a world unit collapse and report no intersection.
 fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
     # Pre-shift each delta by 8 once (asr is signed, deterministic) — the
     # un-shifted deltas are used nowhere else, so this is value-identical to
@@ -89,8 +105,22 @@ fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
 # twosided_flags = pointer to array of i64 (1=two-sided, 0=one-sided)
 #
 # Returns 1 if visible, 0 if blocked.
-
 fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
+    # MEASURED AND REJECTED (1.2.3 audit): the sight ray is fixed across the
+    # loop, so `asr(tx - sx, 8)` / `asr(ty - sy, 8)` are loop-invariant and
+    # bsp_seg_intersect recomputes them once per wall — 2 subs + 2 shifts of
+    # provably wasted work per iteration. Hoisting them into a pre-shifted
+    # helper was implemented and benchmarked BOTH ways:
+    #   - helper shared with bsp_seg_intersect (which then delegates):
+    #     check_sight 55 -> 50 ns, but seg_intersect_hit 53 -> 59 ns and
+    #     seg_intersect_miss 39 -> 46 ns. The added call costs the core
+    #     primitive more than the loop saves.
+    #   - helper used only here, bsp_seg_intersect kept inline: primitive back
+    #     to 53/39, but check_sight measured 53 ns — no better than baseline,
+    #     and the division-free intersection math is now duplicated.
+    # 4 wasted ops are real but invisible against ~30 ops of per-wall work, and
+    # the loop early-returns on the first blocker. Not worth a call penalty on
+    # the primitive or a second copy of correctness-critical math.
     for (var i = 0; i < wall_count; i += 1) {
         # Skip two-sided walls (they don't block sight)
         if (load64(twosided_flags + i * 8) != 0) { continue; }
@@ -115,7 +145,6 @@ fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
 # (sx1,sy1)-(sx2,sy2). Returns the parametric t along the ray
 # where intersection occurs (0..FX_MAX), or -1 if no hit.
 # The actual intersection point = (ox + t*dx, oy + t*dy).
-
 fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
     # Pre-shift each operand by 8 once (asr is signed, deterministic) — the
     # un-shifted dx/dy/sdx/sdy/abx/aby feed only these products, so this is
@@ -155,7 +184,6 @@ fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
 # Returns the approximate distance from point (px,py) to the
 # nearest point on segment (sx1,sy1)-(sx2,sy2).
 # Uses projection + DOOM-style approximate distance.
-
 fn bsp_point_seg_dist(px, py, sx1, sy1, sx2, sy2) {
     var sdx = sx2 - sx1;
     var sdy = sy2 - sy1;
