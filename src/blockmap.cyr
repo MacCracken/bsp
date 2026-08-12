@@ -30,9 +30,20 @@ enum BlockmapConst {
 }
 
 # Initialize a blockmap with given bounds and cell size.
-# buf = caller-provided buffer (must be large enough)
-# Returns: buf (for convenience)
+# buf = caller-provided buffer, which must hold
+#       BM_DATA + cols * rows * BM_CELL_STRIDE bytes.
+# Returns: buf on success, or 0 if the grid dimensions are unusable.
+#
+# Through 1.2.3 this returned `buf` unconditionally. With cols or rows <= 0 the
+# zeroing loop ran zero times, so the caller got a "successful" blockmap whose
+# cell counts were never initialised — every subsequent query read whatever was
+# in the buffer. The dimensions are also capped so that `cols * rows` cannot
+# overflow i64 and wrap negative, which would skip the zeroing the same way.
 fn blockmap_init(buf, origin_x, origin_y, cell_size, cols, rows) {
+    if (cols <= 0) { return 0; }
+    if (rows <= 0) { return 0; }
+    if (cols > 2147483647) { return 0; }
+    if (rows > 2147483647) { return 0; }
     store64(buf + BM_ORIGIN_X, origin_x);
     store64(buf + BM_ORIGIN_Y, origin_y);
     store64(buf + BM_CELL_SIZE, cell_size);
@@ -156,7 +167,12 @@ fn blockmap_cell_count(cell) {
 fn blockmap_cell_seg(cell, idx) {
     if (cell == 0) { return -1; }
     if (idx < 0) { return -1; }
-    if (idx >= BM_CELL_MAX_SEGS) { return -1; }
+    # Against the cell's LIVE count, not BM_CELL_MAX_SEGS. 1.2.3 checked the
+    # constant cap, which stops the read escaping into the next cell but still
+    # hands back whatever sits in this cell's unused slots — a stale index from
+    # a previous blockmap_init, or uninitialised memory. Only slots below the
+    # live count hold a segment this cell actually contains.
+    if (idx >= load64(cell)) { return -1; }
     return load64(cell + 8 + idx * 8);
 }
 

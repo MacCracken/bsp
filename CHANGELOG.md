@@ -5,6 +5,107 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2026-08-12 — `fx_div` rewritten, and the rest of the audit backlog
+
+1.2.3's audit verified only the top two findings per lens; twelve were carried
+unverified. Working through them found that **`fx_div` — the division primitive
+under every ray cast and point-to-segment distance — was wrong by more than 1 %
+on 95 % of divisions with a dividend past 32767**, worst case **241× off**.
+
+**This release changes numeric output for valid input.** That is deliberate:
+the old outputs were incorrect. The blast radius is `fx_div` itself and its two
+callers, `bsp_ray_cast` and `bsp_point_seg_dist` (and `bsp_nearest_seg` /
+`bsp_point_in_subsector` through the latter). `aabb`, `tree` and `frustum` are
+bit-identical — confirmed per-module with the whole-API differential.
+
+**Assertions 136 → 168.**
+
+### Fixed — `fx_div` was wrong on ordinary input
+
+The 1.1.0–1.2.3 body scaled **both** operands down by 8 bits whenever
+`|a| > 32767`, then divided:
+
+```
+if (fx_abs(aa) > 32767) { aa = asr(aa,8); bb = asr(bb,8);
+                          if (bb == 0) { return FX_MAX; } }
+return (aa << 16) / bb;
+```
+
+Three separate defects, all on valid input, all measured:
+
+1. **The scale-down triggered ~2^32 times too eagerly.** `aa << 16` only
+   overflows i64 at `|a| >= 2^47`, but the guard fired at 32767 — so almost
+   every division with a dividend above ~0.5 in 16.16 threw away 8 bits of
+   *both* operands for no reason. This is the bulk of the error: measured over
+   290,835 divisions whose true quotient is representable, the old code was
+   **worse than 1 % on 276,028 of them (95 %)**, with a worst case of
+   **241,103 parts per thousand — 241× off**. The new code is **exact on every
+   one** (worst-case relative error 0).
+2. **`asr` is FLOOR, so scaling the divisor was sign-asymmetric.** A positive
+   divisor of 1..255 floored to **0** and returned the divide-by-zero sentinel
+   for a perfectly representable quotient — `fx_div(100000, 255)` gave
+   `FX_MAX` instead of `25700392`. A negative divisor of −1..−255 floored to
+   **−1**, so *every* divisor in that range produced the **same** answer:
+   `fx_div(100000, -1)` and `fx_div(100000, -255)` both returned `-25559040`,
+   up to 256× off.
+3. **The sentinel was always `+FX_MAX` regardless of sign — a sign inversion.**
+   `fx_div(-100000, 100)` returned `+2147483647` where the true quotient is
+   `-65536000`. Reachable through `bsp_point_seg_dist`, whose projection term
+   `fx_div(dot, len_sq)` takes a signed `dot`: the wrong-signed result then hit
+   `fx_clamp(t, 0, FX_ONE)` and pinned the projection to the *far* endpoint.
+
+Now: scale only when the shift would actually overflow, scale the divisor by
+**magnitude** so both signs behave identically, and saturate to `±FX_MAX` with
+the sign of the true quotient. Divide-by-zero saturates by sign too. Bounds are
+compared directly rather than through `fx_abs`, because `fx_abs(INT64_MIN)` is
+itself negative.
+
+The **small-dividend path (`|a| <= 32767`) is bit-identical** — 200,000
+randomised control samples, 0 mismatches — so this is strictly a fix to inputs
+that were already being computed wrongly. No performance cost: `fx_div` 17 ns,
+`ray_cast` 59 ns, `point_seg_dist` 89 ns, all unchanged.
+
+### Fixed — remaining hardening backlog
+
+- **`blockmap_cell_seg` range-checked `idx` against the constant cap, not the
+  cell's live count.** 1.2.3 added `idx < BM_CELL_MAX_SEGS`, which keeps the
+  read inside the cell but still hands back whatever sits in its **unused**
+  slots — a stale index from an earlier `blockmap_init`, or uninitialised
+  memory. It now checks against `load64(cell)`, the live count.
+- **`blockmap_init` reported success while zeroing nothing.** With `cols` or
+  `rows` <= 0 the zeroing loop ran zero times and it still returned `buf`, so
+  the caller received a "valid" blockmap whose cell counts had never been
+  initialised. It now returns **0** for unusable dimensions, and caps them so
+  `cols * rows` cannot overflow i64 and wrap negative (which would skip the
+  zeroing the same way).
+- **Child references above 16 bits — the high-side twin of the negative-child
+  hole closed in 1.2.3.** Bit 15 is the subsector flag, so `0x18005` passed
+  `bsp_is_subsector` and `bsp_subsector_idx` masked it to **subsector 5**.
+  Rejected now. Likewise `node_count > 32768` is rejected outright: such a tree
+  cannot be addressed by a 15-bit index at all, and the root index itself would
+  have bit 15 set and be read as a leaf (`node_count` 40000 previously resolved
+  to subsector 7231).
+
+### Quality gates (on Cyrius 6.5.20)
+
+- **Tests**: **168 passed, 0 failed** (was 136), with two new groups —
+  `fx_div correctness (1.2.4)` and `malformed-input hardening (1.2.4)`.
+- **Mutation-tested against 1.2.3**: the new assertions produce **17 failures**
+  when run against the 1.2.3 source, and pass here. One assertion was
+  *rewritten* after it turned out not to discriminate — `0x18000` masks to
+  subsector 0, which is also what the fix returns, so it passed either way;
+  it now uses `0x18005`, which masks to 5.
+- **`fx_div` differential vs the 1.2.3 body**, both compiled into one binary:
+  500,000 adversarial samples characterised, plus a **200,000-sample control on
+  `|a| <= 32767` with 0 mismatches**, and a 290,835-sample accuracy comparison
+  against the exact quotient (old worst error 241,103 ppt, new 0).
+- **Whole-API differential, per module**: `fixed`, `isect` and `query` change
+  as intended; **`aabb`, `tree` and `frustum` are bit-identical**.
+- **Fuzz**: `cyrius fuzz` 3/3, plus **3,000,000 iterations** (3 harnesses ×
+  5 seeds × 200K), 0 failures.
+- **`cyrius audit`**: fmt clean, lint clean, docs complete, tests 168/0,
+  bench 1/0. **`cyrius vet`: 8 deps, 0 untrusted, 0 missing.**
+
 ## [1.2.3] - 2026-08-12 — Cyrius 6.5.20, native `asr()`, and a full audit
 
 Three pieces of work: a **free** toolchain pin move, the first payoff from having

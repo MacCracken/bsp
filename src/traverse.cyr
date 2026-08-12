@@ -44,6 +44,13 @@ fn bsp_point_on_side(nodes, node_idx, px, py) {
 fn bsp_find_subsector(nodes, node_count, px, py) {
     if (node_count == 0) { return 0; }
 
+    # The child encoding puts the subsector flag in bit 15 and the index in the
+    # low 15 bits, so a NODE index must fit in 0..0x7FFF. A larger node_count
+    # cannot be addressed at all: the root index itself would have bit 15 set
+    # and be read as a leaf. Reject it rather than silently resolving to a
+    # garbage subsector (1.2.4; node_count 40000 previously returned 0x1C3F).
+    if (node_count > 32768) { return 0; }
+
     var idx = node_count - 1;
     if (idx < 0) { return 0; }
 
@@ -75,6 +82,12 @@ fn bsp_find_subsector(nodes, node_count, px, py) {
             idx = bsp_node_child_l(nodes, idx);
         }
         if (idx < 0) { return 0; }
+        # High-side twin of the negative-child hole closed in 1.2.3. A child
+        # reference only ever occupies 16 bits; anything above that still has
+        # bit 15 set for one in every two values, so bsp_is_subsector accepts it
+        # and bsp_subsector_idx masks it to 15 bits — 0x18000 silently became
+        # subsector 0. Reject instead.
+        if (idx > 65535) { return 0; }
     }
 
     return bsp_subsector_idx(idx);

@@ -9,13 +9,23 @@
 - **Language**: Cyrius (native, compiled via cycc 6.5.20)
 - **Version**: SemVer, single source of truth at `VERSION` (referenced
   via `version = "${file:VERSION}"` in `cyrius.cyml`)
-- **Binary contribution**: ~2KB compiled (1057 lines across 8 modules
+- **Binary contribution**: ~2KB compiled (1154 lines across 8 modules
   in `dist/bsp.cyr`)
-- **Status**: v1.2.3 — STABLE on Cyrius 6.5.20. **136 tests passing**,
-  13 benchmarks (10–252 ns/op), 3 fuzz harnesses (25K-iter standard
-  gate), **0 undocumented public functions**.
+- **Status**: v1.2.4 — STABLE on Cyrius 6.5.20. **168 tests passing**,
+  13 benchmarks, 3 fuzz harnesses (25K-iter standard gate),
+  **0 undocumented public functions**.
 
-  1.2.3 carries a **full audit** that found five correctness defects and
+  **1.2.4 rewrote `fx_div`**, which was wrong by >1 % on 95 % of divisions
+  with a dividend past 32767 (worst case 241x off): the scale-down fired
+  at |a| > 32767 when `a << 16` only overflows at 2^47, and because `asr`
+  is FLOOR it sent positive divisors 1..255 to 0 (returning the
+  divide-by-zero sentinel for representable quotients) and negative
+  -1..-255 all to -1. The sentinel was also always +FX_MAX, inverting the
+  sign. **This changed numeric output of `bsp_ray_cast` and
+  `bsp_point_seg_dist`** — deliberately; the old values were wrong. The
+  `|a| <= 32767` path is bit-identical.
+
+  1.2.3 carried the **full audit** that found five correctness defects and
   two defects in the fuzz harnesses themselves. Highest-value lessons:
   - **`aabb_init`'s sentinels were ±2^31 in an i64 library** — any world
     coordinate past 32767.99 exceeded the seed, so a box grown from one
@@ -198,7 +208,7 @@ cyrius build src/lib.cyr build/bsp
 # unreachable code becomes inert. Used by release.yml.
 CYRIUS_DCE=1 cyrius build src/lib.cyr build/bsp
 
-# Test (136 assertions across 18 groups)
+# Test (168 assertions across 20 groups)
 cyrius test tests/bsp.tcyr
 
 # Benchmark (13 ops, 10–252 ns/op; harness subtracts the ~1.3us timer floor)
@@ -222,7 +232,7 @@ cyrius audit
 # Consumer usage: vendor dist/bsp.cyr, or declare a cyrius.cyml git dep:
 # [deps.bsp]
 # git = "https://github.com/MacCracken/bsp"
-# tag = "1.2.3"
+# tag = "1.2.4"
 # modules = ["dist/bsp.cyr"]
 ```
 
@@ -246,7 +256,7 @@ Root files (required):
   CODE_OF_CONDUCT.md, LICENSE, VERSION, cyrius.cyml
 
 tests/:
-  bsp.tcyr — 136 assertions across 18 test groups
+  bsp.tcyr — 168 assertions across 20 test groups
 
 benches/:
   bsp.bcyr — 13 benchmarks (fx_mul through check_sight)

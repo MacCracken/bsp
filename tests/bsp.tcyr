@@ -569,6 +569,103 @@ fn main() {
                                   fx_from_int(20), fx_from_int(20)), 0,
               "insert_seg reports 0 drops when it fits");
 
+    # ============================================================
+    test_group("fx_div correctness (1.2.4)");
+    # ============================================================
+
+    # Through 1.2.3, fx_div scaled BOTH operands down by 8 bits whenever
+    # |a| > 32767 -- about 2^32 times too eager, since `a << 16` only overflows
+    # i64 at |a| >= 2^47. Because asr is FLOOR, that scaling broke three ways.
+
+    # 1. A positive divisor 1..255 floored to 0 and returned the divide-by-zero
+    #    sentinel for a perfectly representable quotient.
+    assert_eq(fx_div(100000, 255), 25700392, "fx_div(100000,255) is exact, not FX_MAX");
+    assert_eq(fx_div(100000, 100), 65536000, "fx_div(100000,100) is exact, not FX_MAX");
+
+    # 2. A negative divisor -1..-255 all floored to -1, so every divisor in that
+    #    range produced the SAME answer, up to 256x off.
+    assert_eq(fx_div(100000, 0 - 255), 0 - 25700392, "fx_div(100000,-255) is exact");
+    assert_eq(fx_div(100000, 0 - 256), 0 - 25600000, "fx_div(100000,-256) is exact");
+    # These two must now DIFFER; before 1.2.4 both returned -25559040.
+    assert_neq(fx_div(100000, 0 - 100), fx_div(100000, 0 - 255),
+              "distinct negative divisors give distinct results");
+
+    # 3. The sentinel was always +FX_MAX regardless of sign -- a sign INVERSION.
+    assert_eq(fx_div(0 - 100000, 100), 0 - 65536000, "negative dividend keeps its sign");
+    assert_eq(fx_div(0 - 100000, 1), 0 - FX_MAX, "saturation keeps the quotient's sign");
+    assert_eq(fx_div(100000, 1), FX_MAX, "positive saturation is +FX_MAX");
+
+    # Divide-by-zero also saturates by sign now, instead of always +FX_MAX.
+    assert_eq(fx_div(65536, 0), FX_MAX, "div by zero, positive dividend");
+    assert_eq(fx_div(0 - 65536, 0), 0 - FX_MAX, "div by zero, negative dividend");
+    assert_eq(fx_div(0, 0), FX_MAX, "div by zero, zero dividend");
+
+    # The small-dividend path (|a| <= 32767) never scaled in either version and
+    # must be bit-identical. These are RAW fixed values, not fx_from_int -- note
+    # fx_from_int(10) is 655360, well past that threshold.
+    assert_eq(fx_div(30000, 1000), 1966080, "small dividend, exact");
+    assert_eq(fx_div(0 - 30000, 1000), 0 - 1966080, "small dividend, negative");
+    assert_eq(fx_div(0, fx_from_int(5)), 0, "0/5 = 0");
+
+    # Ordinary 16.16 division: 10/3 is 3.3333, i.e. 218453 in 16.16. Both the
+    # old and new code agree here, because 655360 and 196608 both scale by 256
+    # without residue -- the old code only went wrong when they did not.
+    assert_eq(fx_div(fx_from_int(10), fx_from_int(3)), 218453, "10/3 = 3.3333 in 16.16");
+    assert_eq(fx_to_int(fx_div(fx_from_int(10), fx_from_int(3))), 3, "10/3 floors to 3");
+    assert_eq(fx_div(fx_from_int(1), fx_from_int(2)), FX_HALF, "1/2 = 0.5");
+
+    # Results are always inside +-FX_MAX.
+    assert_eq(fx_div(2000000000, 1), FX_MAX, "huge quotient saturates");
+    assert_eq(fx_div(0 - 2000000000, 1), 0 - FX_MAX, "huge negative quotient saturates");
+
+    # ============================================================
+    test_group("malformed-input hardening (1.2.4)");
+    # ============================================================
+
+    # --- blockmap_cell_seg checks the LIVE count, not the constant cap ---
+    # 1.2.3 checked idx < BM_CELL_MAX_SEGS, which keeps the read inside the
+    # cell but still returns whatever sits in its unused slots.
+    var live = alloc(40 + 1 * 136);
+    blockmap_init(live, 0, 0, fx_from_int(4096), 1, 1);
+    blockmap_add(live, 0, 0, 11);
+    blockmap_add(live, 0, 0, 22);
+    var lcell = blockmap_get_cell(live, 0, 0);
+    assert_eq(blockmap_cell_count(lcell), 2, "cell holds 2 segs");
+    assert_eq(blockmap_cell_seg(lcell, 0), 11, "live slot 0");
+    assert_eq(blockmap_cell_seg(lcell, 1), 22, "live slot 1");
+    assert_eq(blockmap_cell_seg(lcell, 2), 0 - 1, "slot past the live count is -1");
+    assert_eq(blockmap_cell_seg(lcell, 15), 0 - 1, "unused slot inside the cap is -1");
+
+    # --- blockmap_init rejects unusable grid dimensions ---
+    # It returned buf unconditionally, so a caller got a "valid" blockmap whose
+    # cell counts had never been zeroed.
+    var badbm = alloc(40 + 136);
+    assert_eq(blockmap_init(badbm, 0, 0, fx_from_int(64), 0, 8), 0, "cols=0 rejected");
+    assert_eq(blockmap_init(badbm, 0, 0, fx_from_int(64), 8, 0), 0, "rows=0 rejected");
+    assert_eq(blockmap_init(badbm, 0, 0, fx_from_int(64), 0 - 1, 8), 0, "cols<0 rejected");
+    assert_eq(blockmap_init(badbm, 0, 0, fx_from_int(64), 8, 0 - 1), 0, "rows<0 rejected");
+    assert_neq(blockmap_init(badbm, 0, 0, fx_from_int(64), 1, 1), 0, "1x1 grid accepted");
+
+    # --- child references above 16 bits (high-side twin of the 1.2.3 fix) ---
+    # bit 15 is the subsector flag, so 0x18000 passed bsp_is_subsector and was
+    # masked to 15 bits, silently resolving to subsector 0.
+    # Use a value whose masked form is NON-zero, or the assertion cannot tell
+    # rejection apart from masking: 0x18005 & 0x7FFF is 5, so 1.2.3 returned
+    # subsector 5 here while 1.2.4 rejects and returns 0.
+    var hi = alloc(BSP_NODE_SIZE * 1);
+    bsp_node_set(hi, 0, 0, 0, fx_from_int(1), 0);
+    bsp_node_set_children(hi, 0, 0x18005, 0x18005);
+    assert_eq(bsp_find_subsector(hi, 1, fx_from_int(10), fx_from_int(10)), 0,
+              "child above 16 bits returns 0, not the masked subsector 5");
+
+    # A node_count that cannot be addressed by the 15-bit index is rejected
+    # outright rather than resolving the root itself as a leaf.
+    assert_eq(bsp_find_subsector(tree, 40000, fx_from_int(10), fx_from_int(10)), 0,
+              "node_count above 32768 is rejected");
+    # The boundary stays usable.
+    assert_eq(bsp_find_subsector(tree, 2, fx_from_int(100), fx_from_int(50)), 0,
+              "ordinary tree still resolves");
+
     return assert_summary();
 }
 

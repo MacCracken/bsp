@@ -50,7 +50,7 @@ dependency in your own `cyrius.cyml`:
 ```toml
 [deps.bsp]
 git = "https://github.com/MacCracken/bsp"
-tag = "1.2.3"
+tag = "1.2.4"
 modules = ["dist/bsp.cyr"]
 ```
 
