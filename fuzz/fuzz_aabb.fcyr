@@ -96,7 +96,7 @@ fn main() {
             # the +-2^31 sentinel bug survived every pre-1.2.3 fuzz run.
             for (var k = 0; k < np; k = k + 1) {
                 if (aabb_contains_point(&box_a, load64(&pts + k * 16),
-                                        load64(&pts + k * 16 + 8)) != 1) {
+                    load64(&pts + k * 16 + 8)) != 1) {
                     syscall(1, 2, "FAIL: added point not contained in box\n", 39);
                     syscall(60, 1);
                 }

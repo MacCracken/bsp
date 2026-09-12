@@ -989,3 +989,12 @@ BSP is production-ready. API stable. Used as primary spatial geometry library fo
 
 - Project scaffolded
 - Architecture defined: tree, traverse, query, intersect, aabb, blockmap, frustum
+
+## [Unreleased]
+
+## [1.2.5] - 2026-09-11
+
+### Changed
+
+- **Toolchain `6.5.20` → `6.6.2`.** No source change; the value form needed none.
+  Build, tests, and any bench/fuzz/distlib target the repo ships re-verified at the new pin.

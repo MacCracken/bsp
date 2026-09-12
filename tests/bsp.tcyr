@@ -439,28 +439,28 @@ fn main() {
     bsp_node_set(cyc, 0, 0, 0, fx_from_int(1), 0);
     bsp_node_set_children(cyc, 0, 1, 1);
     assert_eq(bsp_find_subsector(cyc, 2, fx_from_int(10), fx_from_int(10)), 0,
-              "cyclic tree terminates, returns 0");
+      "cyclic tree terminates, returns 0");
 
     # Child index past the end of the array must not be followed.
     var oob = alloc(BSP_NODE_SIZE * 1);
     bsp_node_set(oob, 0, 0, 0, fx_from_int(1), 0);
     bsp_node_set_children(oob, 0, 999, 999);
     assert_eq(bsp_find_subsector(oob, 1, fx_from_int(10), fx_from_int(10)), 0,
-              "out-of-range child index returns 0");
+      "out-of-range child index returns 0");
 
     # Negative child index must not be followed either.
     var neg = alloc(BSP_NODE_SIZE * 1);
     bsp_node_set(neg, 0, 0, 0, fx_from_int(1), 0);
     bsp_node_set_children(neg, 0, 0 - 5, 0 - 5);
     assert_eq(bsp_find_subsector(neg, 1, fx_from_int(10), fx_from_int(10)), 0,
-              "negative child index returns 0");
+      "negative child index returns 0");
 
     # A well-formed tree is unaffected by the bound (re-check of the 2-node
     # tree built in the traversal group above).
     assert_eq(bsp_find_subsector(tree, 2, fx_from_int(100), fx_from_int(50)), 0,
-              "valid tree still resolves after bounding");
+      "valid tree still resolves after bounding");
     assert_eq(bsp_find_subsector(tree, 2, fx_from_int(900), fx_from_int(50)), 1,
-              "valid tree deep walk still resolves");
+      "valid tree deep walk still resolves");
 
     # --- aabb_init sentinels must dominate the whole i64 coordinate range ---
     # Through 1.2.2 they were +-2^31, but coordinates are 16.16 in 64-BIT
@@ -477,7 +477,7 @@ fn main() {
     assert_eq(aabb_height(big), 0, "one-point box at world 40000 has height 0");
     assert_eq(aabb_contains_point(big, bigp, bigp), 1, "one-point box contains its point");
     assert_eq(aabb_contains_point(big, fx_from_int(35000), fx_from_int(35000)), 0,
-              "one-point box excludes a point 5000 units away");
+      "one-point box excludes a point 5000 units away");
 
     # A grown box at large coordinates must still bound correctly.
     aabb_add_point(big, fx_from_int(50000), fx_from_int(45000));
@@ -514,7 +514,7 @@ fn main() {
     # These two were already correct; pinned so they stay that way.
     assert_eq(bsp_count_in_aabb(fresh, nsegs, 0 - 1), 0, "count_in_aabb count=-1 is 0");
     assert_eq(bsp_check_sight(0, 0, fx_from_int(5), fx_from_int(5), nsegs, 0 - 1, nsegs), 1,
-              "check_sight count=-1 is visible (conservative)");
+      "check_sight count=-1 is visible (conservative)");
 
     # --- blockmap_cell_seg guard parity with blockmap_cell_count ---
     # blockmap_get_cell returns 0 for an out-of-range cell. cell_count already
@@ -542,19 +542,19 @@ fn main() {
     assert_eq(accepted, BM_CELL_MAX_SEGS, "blockmap_add accepts up to the cap");
     assert_eq(blockmap_add(ovf, 0, 0, 999), 0, "blockmap_add rejects past the cap");
     assert_eq(blockmap_cell_count(blockmap_get_cell(ovf, 0, 0)), BM_CELL_MAX_SEGS,
-              "full cell holds exactly the cap");
+      "full cell holds exactly the cap");
 
     # insert_seg into that same full single-cell grid must report 1 drop.
     assert_eq(blockmap_insert_seg(ovf, 42, fx_from_int(10), fx_from_int(10),
-                                  fx_from_int(20), fx_from_int(20)), 1,
-              "insert_seg reports 1 dropped cell when full");
+        fx_from_int(20), fx_from_int(20)), 1,
+      "insert_seg reports 1 dropped cell when full");
 
     # And 0 drops on a fresh grid.
     var okbm = alloc(40 + 1 * 136);
     blockmap_init(okbm, 0, 0, fx_from_int(4096), 1, 1);
     assert_eq(blockmap_insert_seg(okbm, 1, fx_from_int(10), fx_from_int(10),
-                                  fx_from_int(20), fx_from_int(20)), 0,
-              "insert_seg reports 0 drops when it fits");
+        fx_from_int(20), fx_from_int(20)), 0,
+      "insert_seg reports 0 drops when it fits");
 
     # ============================================================
     test_group("fx_div correctness (1.2.4)");
@@ -575,7 +575,7 @@ fn main() {
     assert_eq(fx_div(100000, 0 - 256), 0 - 25600000, "fx_div(100000,-256) is exact");
     # These two must now DIFFER; before 1.2.4 both returned -25559040.
     assert_neq(fx_div(100000, 0 - 100), fx_div(100000, 0 - 255),
-              "distinct negative divisors give distinct results");
+      "distinct negative divisors give distinct results");
 
     # 3. The sentinel was always +FX_MAX regardless of sign -- a sign INVERSION.
     assert_eq(fx_div(0 - 100000, 100), 0 - 65536000, "negative dividend keeps its sign");
@@ -643,15 +643,15 @@ fn main() {
     bsp_node_set(hi, 0, 0, 0, fx_from_int(1), 0);
     bsp_node_set_children(hi, 0, 0x18005, 0x18005);
     assert_eq(bsp_find_subsector(hi, 1, fx_from_int(10), fx_from_int(10)), 0,
-              "child above 16 bits returns 0, not the masked subsector 5");
+      "child above 16 bits returns 0, not the masked subsector 5");
 
     # A node_count that cannot be addressed by the 15-bit index is rejected
     # outright rather than resolving the root itself as a leaf.
     assert_eq(bsp_find_subsector(tree, 40000, fx_from_int(10), fx_from_int(10)), 0,
-              "node_count above 32768 is rejected");
+      "node_count above 32768 is rejected");
     # The boundary stays usable.
     assert_eq(bsp_find_subsector(tree, 2, fx_from_int(100), fx_from_int(50)), 0,
-              "ordinary tree still resolves");
+      "ordinary tree still resolves");
 
     return assert_summary();
 }
