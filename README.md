@@ -81,12 +81,12 @@ signed value. `>>>` binds tighter than `+`, so parenthesise over a sum.
 ## Size Target
 
 ~1–2 KB of compiled contribution to a consumer binary. Geometry is just math.
-(The standalone `build/bsp` is ~122 KB, almost entirely Cyrius prelude that a
-real consumer already links.)
+(The standalone `build/bsp` is ~179 KB, almost entirely Cyrius prelude that a
+real consumer already links; the `CYRIUS_DCE=1` release build is ~20 KB.)
 
 ## Build & Test
 
-Requires the Cyrius toolchain pinned in `cyrius.cyml` (currently 6.5.20).
+Requires the Cyrius toolchain pinned in `cyrius.cyml` (currently 6.6.20).
 
 ```sh
 cyrius build src/lib.cyr build/bsp
@@ -107,7 +107,7 @@ with `cyrius distlib`), or declare a git dependency in your own `cyrius.cyml`:
 ```toml
 [deps.bsp]
 git = "https://github.com/MacCracken/bsp"
-tag = "1.2.4"
+tag = "1.2.6"
 modules = ["dist/bsp.cyr"]
 ```
 

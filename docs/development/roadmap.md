@@ -1,8 +1,9 @@
 # BSP Development Roadmap
 
-> **v1.2.4** — 122,280 B standalone (cycc 6.5.20). 168/168 assertions across
-> 20 groups, 13/13 benches, 3 fuzz harnesses (25K standard gate, clean at 3M
-> stress), 0 undocumented public functions. 1,182-line `dist/bsp.cyr` bundle.
+> **v1.2.6** — 179,488 B standalone, 19,744 B release (`CYRIUS_DCE=1`), on
+> cycc 6.6.20. 168/168 assertions across 20 groups, 13/13 benches, 3 fuzz
+> harnesses (25K standard gate, clean at 3M stress), `cyrius audit` green,
+> 0 undocumented public functions. 1,182-line `dist/bsp.cyr` bundle.
 >
 > 1.2.3 and 1.2.4 together were the **audit arc**: seven real defects, five of
 > them silent-wrong-answer rather than crash, plus two defects in the fuzz
@@ -23,6 +24,8 @@
 | v1.2.2 | Cyrius 6.3.5 → 6.5.19 (~130 patches). Fuzz harnesses renamed `*.cyr` → `*.fcyr` so `cyrius fuzz` could discover them at all; `atomic`/`result` declared in `[deps] stdlib`. +19,936 B growth-tax, the project's largest |
 | v1.2.3 | Cyrius 6.5.20 (byte-identical build); `asr()` became a one-line alias for native `>>>`; **full audit** — `aabb_init` ±2^31 sentinels, `bsp_find_subsector` hang/OOB/negative-child, `blockmap_cell_seg` SIGSEGV, blockmap silent drops, negative-count queries; fuzz PRNG correlation + `fuzz_aabb` blind spot; docs 33 undocumented → 0; 103 → 136 assertions |
 | v1.2.4 | **`fx_div` rewritten** — was wrong by >1 % on 95 % of divisions with a dividend past 32767 (worst case 241×), with a sign-inverting sentinel; plus blockmap live-count/dimension guards and the above-16-bit child hole. 136 → 168 assertions |
+| v1.2.5 | Cyrius 6.5.20 → 6.6.2 (pure pin move). Shipped with `cyrius audit` red: the 6.6.x audit lints and doc-checks the harnesses too, and flagged 19 undocumented harness functions and one over-length test line |
+| v1.2.6 | Cyrius 6.6.2 → 6.6.20; stdlib re-synced; `cyrius.lock` added; `dist/bsp.deps` retired by 6.6.18 distlib; audit green again and now gated in CI. 3M-iteration cross-toolchain differential, zero divergence. +57,184 B standalone growth-tax (+3,936 B release), now the project's largest |
 
 ## Notes on the abandoned 1.2.x language-adoption plan
 
@@ -48,13 +51,14 @@ mirroring another project's sweep.
 
 ## v1.4.x — Performance recovery (gated on Cyrius O3)
 
-`CYRIUS_DCE=1` currently NOPs ~82 KB of unreachable code in place, so the file
-size is unchanged. Cyrius O3 (IR-driven real DCE + const-prop + dead-store
-elimination) would genuinely shrink it.
+`CYRIUS_DCE=1` now *compacts* rather than NOPing in place (true by 6.6.2, and
+still at 6.6.20): the release build drops 156,377 B of unreachable code and
+ships 19,744 B. The rest of Cyrius O3 (const-prop, dead-store elimination) is
+still upstream.
 
 | # | Item | Status | Detail |
 |---|------|--------|--------|
-| 1 | Wait for **Cyrius O3** real DCE | Upstream | ~82 KB of the 122,280 B standalone is unreachable prelude |
+| 1 | Wait for **Cyrius O3** real DCE | Partly landed | DCE compaction works (179,488 → 19,744 B at 6.6.20); const-prop / dead-store elimination still upstream |
 | 2 | Re-bench under O2/O3/O4 phases | Pending | bench-history per upstream phase landing |
 | 3 | `bsp_count_in_aabb` reloads all four box fields per entity | Open | Found in the 1.2.3 audit, not yet actioned — hoist the bounds out of the loop |
 

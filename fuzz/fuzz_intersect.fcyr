@@ -32,6 +32,8 @@ fn _fz_coord() {
     return (r % 20000) - 10000;
 }
 
+# Fuzz entry: [iters] [seed]. Random segments, rays, distances; must not
+# crash, and asserts non-negative distance and a valid side value.
 fn main() {
     alloc_init();
     args_init();

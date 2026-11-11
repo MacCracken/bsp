@@ -32,6 +32,8 @@ fn _fz_coord() {
     return fx_from_int(r % 1024);
 }
 
+# Fuzz entry: [iters] [seed]. Random blockmap inserts and queries; must not
+# crash or return a negative count.
 fn main() {
     alloc_init();
     args_init();

@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "BSP — Binary Space Partitioning. Spatial geometry primitives for Cyrius."
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.6.2"
+cyrius = "6.6.20"
 repository = "https://github.com/MacCracken/bsp"
 
 [build]
@@ -35,5 +35,10 @@ modules = [
 # they must be declared anyway or `cyrius lib sync` leaves them behind at
 # whatever snapshot vendored them last — before 1.2.2 declared them, the
 # vendored lib/atomic.cyr predated the 6.3.5 pin the project was on.
+#
+# `poison` (alloc -> poison, 6.6.18+) is deliberately NOT declared: alloc
+# includes it only under `#ifdef CYRIUS_POISON`, which `cyrius fuzz --poison`
+# sets. Declaring it forces it into every build unconditionally — measured
+# at the 1.2.6 pin move: +12,656 B on the standalone build for nothing.
 [deps]
 stdlib = ["string", "alloc", "atomic", "vec", "str", "fmt", "io", "result", "syscalls", "args", "fnptr", "math", "assert", "bench"]

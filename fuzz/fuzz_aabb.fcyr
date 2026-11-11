@@ -49,6 +49,8 @@ fn _fz_coord() {
     return (r % 70368744177664) - 35184372088832;
 }
 
+# Fuzz entry: [iters] [seed]. Random AABB ops; asserts non-negative extents,
+# that every added point is contained, and that the centre lies in the box.
 fn main() {
     alloc_init();
     args_init();

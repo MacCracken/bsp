@@ -127,6 +127,23 @@ jobs:
           PASSED=$(grep -oE '[0-9]+ passed' /tmp/fuzz_output | tail -1 | cut -d' ' -f1)
           [ "${PASSED:-0}" -ge 3 ] || { echo "::error::expected >=3 fuzz harnesses, ran ${PASSED:-0}"; exit 1; }
 
+      # fmt + lint + docs + tests + bench. Added in 1.2.6: 1.2.5 shipped with
+      # `cyrius audit` exiting 1 (19 undocumented harness fns, one 131-column
+      # line) and nothing noticed, because CI never ran it — this is also the
+      # only place CI runs fmt, lint, the doc check and the bench build. Graded
+      # on the exit status AND on each section's `ok:` line, so an audit that
+      # someday exits 0 past a failing section (as `cyrius fuzz` once did with
+      # "no harnesses found") still fails here.
+      - name: Run cyrius audit
+        run: |
+          ec=0
+          cyrius audit > /tmp/audit_output 2>&1 || ec=$?
+          cat /tmp/audit_output
+          [ "$ec" -eq 0 ] || { echo "::error::cyrius audit exited $ec"; exit 1; }
+          for ok in "ok: format clean" "ok: lint clean" "ok: docs complete"; do
+            grep -qF "$ok" /tmp/audit_output || { echo "::error::cyrius audit: missing '$ok'"; exit 1; }
+          done
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest

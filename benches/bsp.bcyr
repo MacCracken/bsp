@@ -28,6 +28,7 @@ var _b_walls = 0;
 var _b_flags = 0;
 var _b_results = 0;
 
+# Build the shared fixtures (boxes, 3-node tree, blockmap, walls) once before timing.
 fn bench_setup() {
     # AABB boxes
     _b_box_a = alloc(32);
@@ -79,6 +80,7 @@ fn bench_setup() {
 # Fixed-point benchmarks
 # ================================================================
 
+# One 16.16 multiply.
 fn bench_fx_mul() {
     var a = fx_from_int(42);
     var b = fx_from_int(17);
@@ -86,6 +88,7 @@ fn bench_fx_mul() {
     return 0;
 }
 
+# One 16.16 divide on the unscaled path (|a| < 2^47, no pre-shift).
 fn bench_fx_div() {
     var a = fx_from_int(1000);
     var b = fx_from_int(7);
@@ -97,16 +100,19 @@ fn bench_fx_div() {
 # AABB benchmarks
 # ================================================================
 
+# Point-in-box test against a fixed 100x100 box.
 fn bench_aabb_contains() {
     aabb_contains_point(_b_box_a, fx_from_int(50), fx_from_int(50));
     return 0;
 }
 
+# Box-box overlap test.
 fn bench_aabb_intersects() {
     aabb_intersects(_b_box_a, _b_box_b);
     return 0;
 }
 
+# Merge one box into a stack-local box.
 fn bench_aabb_merge() {
     var tmp[32];
     aabb_set(&tmp, fx_from_int(100), fx_from_int(0), fx_from_int(0), fx_from_int(100));
@@ -118,6 +124,7 @@ fn bench_aabb_merge() {
 # Intersection benchmarks
 # ================================================================
 
+# Segment intersection, crossing case (an X).
 fn bench_seg_intersect_hit() {
     bsp_seg_intersect(
       fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(10),
@@ -125,6 +132,7 @@ fn bench_seg_intersect_hit() {
     return 0;
 }
 
+# Segment intersection, parallel non-crossing case.
 fn bench_seg_intersect_miss() {
     bsp_seg_intersect(
       fx_from_int(0), fx_from_int(0), fx_from_int(10), fx_from_int(0),
@@ -132,6 +140,7 @@ fn bench_seg_intersect_miss() {
     return 0;
 }
 
+# Point-to-segment distance with an interior projection.
 fn bench_point_seg_dist() {
     bsp_point_seg_dist(
       fx_from_int(5), fx_from_int(5),
@@ -139,6 +148,7 @@ fn bench_point_seg_dist() {
     return 0;
 }
 
+# Ray cast that hits a vertical segment.
 fn bench_ray_cast() {
     bsp_ray_cast(
       fx_from_int(0), fx_from_int(5), fx_from_int(1), fx_from_int(0),
@@ -150,11 +160,13 @@ fn bench_ray_cast() {
 # BSP traversal benchmarks
 # ================================================================
 
+# Point-on-side test against one partition line.
 fn bench_point_on_side() {
     bsp_point_on_side(_b_tree, 0, fx_from_int(300), fx_from_int(100));
     return 0;
 }
 
+# Point-to-subsector walk down the 3-node tree.
 fn bench_find_subsector() {
     bsp_find_subsector(_b_tree, 3, fx_from_int(600), fx_from_int(100));
     return 0;
@@ -164,6 +176,7 @@ fn bench_find_subsector() {
 # Blockmap benchmarks
 # ================================================================
 
+# Broadphase query of the blockmap around a point.
 fn bench_blockmap_query() {
     blockmap_query_point(_b_bm, fx_from_int(150), fx_from_int(100), fx_from_int(50), _b_results, 16);
     return 0;
@@ -173,6 +186,7 @@ fn bench_blockmap_query() {
 # Line-of-sight benchmark
 # ================================================================
 
+# Line-of-sight over 8 walls, none blocking (worst case).
 fn bench_check_sight() {
     # The ray must NOT be blocked, or the loop returns at the first wall and
     # this measures ONE iteration while claiming eight. The walls are vertical
@@ -190,6 +204,7 @@ fn bench_check_sight() {
 # Main
 # ================================================================
 
+# Register and run every benchmark; prints per-op cost.
 fn main() {
     alloc_init();
     bench_setup();

@@ -5,6 +5,158 @@ All notable changes to BSP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.2.6] - 2026-11-10 — Cyrius 6.6.20
+
+Toolchain catch-up: the pin moves **6.6.2 → 6.6.20** (18 patches) and the
+vendored stdlib is re-synced to the 6.6.20 snapshot. **No library source
+changed** — `src/` is untouched and the `dist/bsp.cyr` body is byte-identical to
+1.2.5; only its `# Version:` line moved. Behaviour is proven identical across
+the two toolchains by a 3,000,000-iteration whole-API differential.
+
+The release also turns `cyrius audit` green again (**1.2.5 shipped with it
+failing**; see Fixed), and CI now runs it, so a red audit can't ship again
+unnoticed.
+
+### Added
+
+- **CI runs `cyrius audit`** (`ci.yml`, `test` job, after fuzz). Until now CI
+  never ran it, which is how 1.2.5's failure got out. It is also the first
+  CI step that runs fmt, lint, the doc check and the bench build. The step
+  grades on the **exit status** and also requires each section's `ok:` line
+  (`format clean`, `lint clean`, `docs complete`). That way an audit that
+  someday exits 0 past a failing section still fails CI, the same trap
+  `cyrius fuzz` fell into with "no harnesses found". Mutation-tested by
+  running the step's script verbatim: **green** on 1.2.6, and **red** on the
+  1.2.5 tree, on one removed doc comment (docs), on a fmt-clean 141-column
+  line (lint), and on one mis-indented line (fmt). Each failure lands in the
+  section it targets. The `ok:`-line backstop was tested against a stub
+  `cyrius` that exits 0 while reporting an undocumented function, and it fails.
+
+### Changed
+
+- **Cyrius pin 6.6.2 → 6.6.20** (`cyrius.cyml`). The 6.6.3–6.6.20 changelogs
+  were reviewed for exposure: nothing changes the meaning of anything BSP uses
+  (`<<`, `>>`, `>>>`, precedence tiers, integer and enum semantics,
+  `load64`/`store64`). The one codegen fix inside BSP's construct set — 6.6.20's
+  `continue` in a `for` nested in a `while` nested in a `for`, which was patched
+  to the *outer* loop's step — **does not reach BSP**: the only `continue` in
+  the tree is `bsp_check_sight`'s (`src/intersect.cyr:138`), in a single-level
+  loop (grep-verified across `src/`, `tests/`, `benches/`, `fuzz/`, `programs/`).
+  The pin is taken for currency, not to fix anything here.
+- **Vendored stdlib re-synced** via `cyrius lib sync`. **All 14 declared modules
+  changed** between the 6.6.2 and 6.6.20 snapshots, and `alloc` gained a new
+  platform file (`alloc_cx.cyr`). `lib/` now matches the 6.6.20 snapshot
+  byte-for-byte.
+- **`cyrius.lock` added.** 6.6.x writes a lockfile for stdlib-only projects too:
+  the SHA256 of every vendored file plus the pin. Committed, as cyrius-doom does.
+  `cyrius deps --verify`: **28 verified, 0 failed**. Generated from a clean
+  checkout (`cyrius deps` then `cyrius build`, the order CI runs), because
+  `lib sync` locks every `.cyr` under `lib/` *recursively* — a local backup
+  directory inside `lib/` added 52 rows CI would never see.
+- **`dist/bsp.deps` is no longer emitted.** Since 6.6.18, `distlib` builds the
+  sidecar from what a compile-verify pass proves the bundle needs, instead of
+  copying `[deps] stdlib`. BSP's bundle needs no stdlib, so `distlib` now
+  removes the file (`no stdlib leaves remain`). That fixes the 1.2.2 problem
+  where the sidecar listed the *harness* deps as if the bundle needed them. The
+  `dist/*.deps` gitignore entry stays as a guard.
+- **`poison` deliberately left out of `[deps] stdlib`**, with the reason
+  recorded in `cyrius.cyml`. 6.6.18's `alloc` includes `lib/poison.cyr` only under
+  `#ifdef CYRIUS_POISON`, which `cyrius fuzz --poison` sets. The 1.2.2 rule
+  ("declare transitive-only modules") is about *unconditional* includes like
+  `atomic` and `result`. Declaring `poison` forces it into every build:
+  **measured +12,656 B** on the standalone binary (179,488 → 192,144 B), for a
+  mode BSP never runs.
+
+### Fixed
+
+- **`cyrius audit` failed on 1.2.5**, with identical output under 6.6.2 and
+  6.6.20: `1 lint warnings` and `19 undocumented public fns`. 1.2.4's audit on
+  6.5.20 had reported docs complete. The 6.6.x audit lints and doc-checks
+  `src programs tests benches fuzz`, not just the library. All 19 were harness
+  entry points: `main` in each of the five harnesses, `bench_setup`, and the 13
+  `bench_*` functions. **`src/` was fully documented throughout** (54/54
+  public functions). Each harness function now has a one-line doc comment, and
+  the one over-length line, `tests/bsp.tcyr:365` (131 columns against a 120
+  limit), is wrapped. Comments and whitespace only: no harness logic changed.
+
+### Size
+
+Measured in fresh trees, one build per tree.
+
+| Build | 6.6.2 (1.2.5) | 6.6.20 (1.2.6) | Δ |
+|---|---:|---:|---:|
+| Standalone `build/bsp` | 122,304 B | 179,488 B | **+57,184 B (+46.8 %)** |
+| — of which unreachable | 438 fns / 104,823 B | 553 fns / 156,377 B | +51,554 B |
+| — reachable remainder | 17,481 B | 23,111 B | +5,630 B |
+| Release (`CYRIUS_DCE=1`, what `release.yml` builds) | 15,808 B | 19,744 B | +3,936 B |
+
+This is the **largest growth tax the project has taken**, about 2.9× 1.2.2's
++19,936 B, and it comes almost entirely from stdlib/prelude widening. It does
+not touch what consumers link: `dist/bsp.cyr` is 1,182 lines and
+byte-identical in body.
+
+### Quality gates (on Cyrius 6.6.20)
+
+- **Tests**: **168 passed, 0 failed**.
+- **Cross-toolchain whole-API differential.** One probe calls every public
+  function plus the three private helpers (`_seg_check`, `_seg_intersect_pre`,
+  `_approx_dist`) and folds the results into eight per-module checksums. It was
+  compiled *unchanged* under 6.6.2 and 6.6.20. The corpus mixes coordinate bands:
+  sub-precision, ±10,000 raw, ±65M raw, world coordinates to ±60,000,
+  ±2e9, and exact edge values. It also includes malformed trees (child
+  references that are out of range, negative, or above 16 bits) and malformed
+  blockmaps (zero or negative dimensions, zero cell size).
+  **6 seeds × 500,000 = 3,000,000 iterations: every checksum identical.**
+- **The probe is mutation-tested.** Four seeded bugs each changed the checksums
+  of the module that owns the code (and its callers) and of no other module:
+  `fx_mul` on logical `>>`, `blockmap_cell_seg` off by one against the live
+  count, `bsp_find_subsector`'s above-16-bit guard removed, and `AABB_EMPTY` back
+  at 2^31. A fifth mutant, the guard moved from `> 65535` to `> 65536`, left
+  every checksum unchanged. It turned out to be *equivalent*: 65536 has bit 15
+  clear, so it is read as a node index and the existing `idx >= node_count`
+  check rejects it anyway.
+- **Fuzz**: `cyrius fuzz` 3/3, plus **3,000,000 stress iterations** (3 harnesses
+  × 5 seeds × 200K), 0 failures.
+- **Benches**: 13/13, **flat**. These are ns/op ranges over three runs each:
+
+  | Op | 6.6.2 | 6.6.20 |
+  |---|---:|---:|
+  | `fx_mul` | 14–15 | 13–14 |
+  | `fx_div` | 13 | 12–13 |
+  | `aabb_contains` | 12–13 | 12 |
+  | `aabb_intersects` | 10 | 9 |
+  | `aabb_merge` | 24–25 | 23 |
+  | `seg_intersect_hit` | 52–58 | 55–56 |
+  | `seg_intersect_miss` | 39–40 | 38 |
+  | `point_seg_dist` | 87–90 | 89–90 |
+  | `ray_cast` | 53–54 | 53 |
+  | `point_on_side` | 27 | 28 |
+  | `find_subsector_3node` | 45 | 46–47 |
+  | `blockmap_query` | 142–146 | 139–142 |
+  | `check_sight_8walls` | 246–259 | 241–243 |
+
+  Every difference is inside run-to-run noise. Read the table as *no
+  regression*, not as a win. The 6.6.20 harness also reports windowed per-op
+  picoseconds, and its per-row min/max spread is much tighter (for example
+  `fx_mul` min=max=13 ns, against 11–17 ns before).
+- **`cyrius audit`**: fmt clean, lint clean, docs complete, tests 168/0, bench
+  1/0, **exit 0** (1.2.5: exit 1). **`cyrius vet src/lib.cyr`**: 8 deps,
+  0 untrusted, 0 missing. **`cyrius deny src/lib.cyr`**: 0 violations.
+- **Bundle**: `cyrius distlib` regenerated `dist/bsp.cyr` (v1.2.6);
+  `distlib --check` reports it current; `cyrius check dist/bsp.cyr`: ok.
+
+## [1.2.5] - 2026-09-11
+
+### Changed
+
+- **Toolchain `6.5.20` → `6.6.2`.** No source change; the value form needed none.
+  Build, tests, and any bench/fuzz/distlib target the repo ships re-verified at the new pin.
+- *(Recorded at 1.2.6.)* The same commit also reflowed continuation-line
+  indentation in `tests/`, `benches/` and `fuzz/` (whitespace only). This entry
+  was originally appended below `[0.1.0]` and was moved into order at 1.2.6.
+
 ## [1.2.4] - 2026-08-12 — `fx_div` rewritten, and the rest of the audit backlog
 
 1.2.3's audit verified only the top two findings per lens; twelve were carried
@@ -989,12 +1141,3 @@ BSP is production-ready. API stable. Used as primary spatial geometry library fo
 
 - Project scaffolded
 - Architecture defined: tree, traverse, query, intersect, aabb, blockmap, frustum
-
-## [Unreleased]
-
-## [1.2.5] - 2026-09-11
-
-### Changed
-
-- **Toolchain `6.5.20` → `6.6.2`.** No source change; the value form needed none.
-  Build, tests, and any bench/fuzz/distlib target the repo ships re-verified at the new pin.

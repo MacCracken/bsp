@@ -12,6 +12,7 @@ include "lib/assert.cyr"
 
 include "src/lib.cyr"
 
+# Run every assertion group; exits nonzero on any failure.
 fn main() {
     alloc_init();
 
@@ -362,7 +363,8 @@ fn main() {
     store64(qsegs + 48, fx_from_int(40000)); store64(qsegs + 56, fx_from_int(40000));
 
     assert_eq(bsp_nearest_seg(0, 0, qsegs, 2), 1, "nearest_seg far query picks nearer seg (1.2.0 INT64_MAX sentinel)");
-    assert_eq(bsp_nearest_seg(fx_from_int(41000), fx_from_int(41000), qsegs, 2), 1, "nearest_seg picks closer of two (in-range)");
+    assert_eq(bsp_nearest_seg(fx_from_int(41000), fx_from_int(41000), qsegs, 2), 1,
+      "nearest_seg picks closer of two (in-range)");
     assert_eq(bsp_nearest_seg(0, 0, qsegs, 0), -1, "nearest_seg empty = -1");
 
     # count_in_aabb: 16 bytes per entity (x, y). Box [0,100]x[0,100].
