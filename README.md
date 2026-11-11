@@ -95,19 +95,19 @@ cyrius fuzz
 cyrius audit
 ```
 
-168 assertions across 20 groups, 13 benchmarks, and 3 fuzz harnesses
+200 assertions across 21 groups, 14 benchmarks, and 3 fuzz harnesses
 auto-discovered from `fuzz/*.fcyr` (25,000 iterations as the standard gate;
 each takes optional `[iters] [seed]` for stress runs).
 
 ## Use It
 
-Either vendor the single-file bundle `dist/bsp.cyr` (1,182 lines, regenerate
+Either vendor the single-file bundle `dist/bsp.cyr` (1,397 lines, regenerate
 with `cyrius distlib`), or declare a git dependency in your own `cyrius.cyml`:
 
 ```toml
 [deps.bsp]
 git = "https://github.com/MacCracken/bsp"
-tag = "1.3.1"
+tag = "1.3.2"
 modules = ["dist/bsp.cyr"]
 ```
 

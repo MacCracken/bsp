@@ -14,7 +14,7 @@ enum BBox {
     AABB_LEFT = 16;
     AABB_RIGHT = 24;
     AABB_SIZE = 32;
-    # Inverted seeds for an "empty" box, +-2^61.
+    # Inverted seeds for an "empty" box, +-2^50.
     #
     # These were +-2^31 through 1.2.2, which is the same defect class as the
     # bsp_nearest_seg sentinel fixed in 1.2.0: coordinates here are 16.16 in
@@ -25,8 +25,8 @@ enum BBox {
     #
     # NOT INT64_MIN/INT64_MAX: aabb_width computes RIGHT - LEFT, and
     # INT64_MIN - INT64_MAX wraps to +1, so a fresh box would report width 1
-    # while still passing fuzz_aabb's "width >= 0" invariant. At +-2^61 that
-    # subtraction is -2^62 — representable and negative — so aabb_width and
+    # while still passing fuzz_aabb's "width >= 0" invariant. At +-2^50 that
+    # subtraction is -2^51 — representable and negative — so aabb_width and
     # aabb_height still return 0 on a fresh box, and aabb_center_x now returns
     # exactly 0 instead of the -1 the asymmetric 2^31 pair produced.
     # Stored as the MAGNITUDE only: a Cyrius enum initialiser must be a

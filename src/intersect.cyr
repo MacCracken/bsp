@@ -27,8 +27,33 @@ fn bsp_point_side(px, py, lx, ly, ldx, ldy) {
     # precision, but it MOVES the side-classification boundary — changing
     # stable test/fuzz outputs across the 1.x API — so do not change it
     # without re-running tests + fuzz.
-    var left = (asr(dx, 8) * asr(ldy, 8)) ;
-    var right = (asr(dy, 8) * asr(ldx, 8)) ;
+    #
+    #
+    # The DIRECTION is shifted only when it is large (1.3.2). Its scale is
+    # arbitrary — a caller may pass a unit vector (cos, sin) — and a fixed
+    # >>8 kept just 8 bits of one: direction (65536, 255) became (256, 0),
+    # so a point 16.7 world units to its right at x=30000 classified LEFT.
+    # Scaling both direction components by the same factor cannot change
+    # which side wins, so the shift is needed only to keep the product in
+    # range: with |ldx|,|ldy| < 2^24 and the offset pre-shifted to ~2^24 at
+    # DOOM scale, each product stays under ~2^48. A direction that is a
+    # multiple of 256 (every integer-world-unit direction, i.e. all DOOM node
+    # data) gives exactly the same answer either way.
+    #
+    # `small` is -2^24 <= ldx, ldy < 2^24: biasing by 2^24 maps that range to
+    # 0..2^25-1, and the LOGICAL >>25 of the OR is 0 only if both landed
+    # there (a negative or wrapped sum sets high bits).
+    #
+    # bsp_point_on_side and bsp_find_subsector (traverse.cyr) carry INLINED
+    # copies of this test for speed (1.3.2). Change all three together.
+    var sdx = ldx;
+    var sdy = ldy;
+    if ((((ldx + 16777216) | (ldy + 16777216)) >> 25) != 0) {
+        sdx = asr(ldx, 8);
+        sdy = asr(ldy, 8);
+    }
+    var left = asr(dx, 8) * sdy;
+    var right = asr(dy, 8) * sdx;
     if (left >= right) { return 0; }
     return 1;
 }
@@ -76,18 +101,28 @@ fn _seg_check(denom, t1_num, t2_num) {
 #
 # All operands are pre-shifted by 8 bits, so segments whose extent is below
 # ~1/256 of a world unit collapse and report no intersection.
+#
+# Every point is shifted RELATIVE TO A1 (1.3.2): B's direction is formed as
+# asr(B2 - A1, 8) - asr(B1 - A1, 8), not asr(B2 - B1, 8). Flooring each
+# segment's own delta independently put the two copies of a SHARED vertex up
+# to 256 raw units apart, so a line could pass between two walls that meet at
+# a fractional vertex — bsp_check_sight saw through a closed corner. Measured
+# from A1 the shared vertex shifts to the same value in both. Whenever
+# B2 - B1 is a multiple of 256 — always, for vertices on integer world
+# coordinates as in DOOM maps, WHEREVER A1 lies (floor(x + k) = floor(x) + k
+# for whole k) — the two forms are equal and the result is unchanged.
 fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
     # Pre-shift each delta by 8 once (asr is signed, deterministic) — the
     # un-shifted deltas are used nowhere else, so this is value-identical to
-    # shifting at each use and halves the asr count (12 → 6).
+    # shifting at each use and halves the asr count.
     var dax = asr(ax2 - ax1, 8);
     var day = asr(ay2 - ay1, 8);
-    var dbx = asr(bx2 - bx1, 8);
-    var dby = asr(by2 - by1, 8);
-    var denom = dax * dby - day * dbx;
-    if (denom == 0) { return 0; }
     var abx = asr(bx1 - ax1, 8);
     var aby = asr(by1 - ay1, 8);
+    var dbx = asr(bx2 - ax1, 8) - abx;
+    var dby = asr(by2 - ay1, 8) - aby;
+    var denom = dax * dby - day * dbx;
+    if (denom == 0) { return 0; }
     var t1_num = abx * dby - aby * dbx;
     var t2_num = abx * day - aby * dax;
     return _seg_check(denom, t1_num, t2_num);
@@ -104,12 +139,12 @@ fn bsp_seg_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
 # one MUST be mirrored in the other; the whole-API differential probe exercises
 # both against a reference build and will catch divergence.
 fn _seg_intersect_pre(ax1, ay1, dax, day, bx1, by1, bx2, by2) {
-    var dbx = asr(bx2 - bx1, 8);
-    var dby = asr(by2 - by1, 8);
-    var denom = dax * dby - day * dbx;
-    if (denom == 0) { return 0; }
     var abx = asr(bx1 - ax1, 8);
     var aby = asr(by1 - ay1, 8);
+    var dbx = asr(bx2 - ax1, 8) - abx;
+    var dby = asr(by2 - ay1, 8) - aby;
+    var denom = dax * dby - day * dbx;
+    if (denom == 0) { return 0; }
     var t1_num = abx * dby - aby * dbx;
     var t2_num = abx * day - aby * dax;
     return _seg_check(denom, t1_num, t2_num);
@@ -124,7 +159,8 @@ fn _seg_intersect_pre(ax1, ay1, dax, day, bx1, by1, bx2, by2) {
 # walls = pointer to array of segments, each 32 bytes:
 #   [0] x1, [8] y1, [16] x2, [24] y2 (all fixed-point)
 # wall_count = number of segments
-# twosided_flags = pointer to array of i64 (1=two-sided, 0=one-sided)
+# twosided_flags = pointer to array of i64 (1=two-sided, 0=one-sided), or 0
+#                  when every wall is one-sided (all of them block).
 #
 # Returns 1 if visible, 0 if blocked.
 fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
@@ -134,8 +170,12 @@ fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
     var day = asr(ty - sy, 8);
 
     for (var i = 0; i < wall_count; i += 1) {
-        # Skip two-sided walls (they don't block sight)
-        if (load64(twosided_flags + i * 8) != 0) { continue; }
+        # Skip two-sided walls (they don't block sight). A 0 flags pointer
+        # means none are two-sided; through 1.3.1 it was dereferenced and took
+        # SIGSEGV. The extra test costs nothing measurable.
+        if (twosided_flags != 0) {
+            if (load64(twosided_flags + i * 8) != 0) { continue; }
+        }
 
         var base = walls + i * 32;
         var wx1 = load64(base);
@@ -157,20 +197,46 @@ fn bsp_check_sight(sx, sy, tx, ty, walls, wall_count, twosided_flags) {
 # (sx1,sy1)-(sx2,sy2). Returns the parametric t along the ray
 # where intersection occurs (0..FX_MAX), or -1 if no hit.
 # The actual intersection point = (ox + t*dx, oy + t*dy).
+#
+# The direction may have any scale — a unit vector (cos, sin) is fine, and t
+# is then the distance in world units.
 fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
-    # Pre-shift each operand by 8 once (asr is signed, deterministic) — the
-    # un-shifted dx/dy/sdx/sdy/abx/aby feed only these products, so this is
-    # value-identical to shifting at each use and halves the asr count (12 → 6).
-    var sdx = asr(sx2 - sx1, 8);
-    var sdy = asr(sy2 - sy1, 8);
+    # Segment endpoints are shifted RELATIVE TO THE ORIGIN, then subtracted
+    # (1.3.2), so two walls sharing a vertex agree on it exactly — see the
+    # note on bsp_seg_intersect. Unchanged whenever the segment's own delta is
+    # a multiple of 256 (integer-unit vertices), wherever the origin lies.
+    var abx = asr(sx1 - ox, 8);
+    var aby = asr(sy1 - oy, 8);
+    var sdx = asr(sx2 - ox, 8) - abx;
+    var sdy = asr(sy2 - oy, 8) - aby;
+
+    # The DIRECTION used to get a fixed >>8 as well, which keeps only 8 bits
+    # of a unit vector: (65536, 255) became (256, 0), so a ray climbing 3.9
+    # units over 1000 was treated as level and hit a wall it passes above,
+    # (+100, 0) became (0, 0) and never hit anything, and (-100, 0) became
+    # (-1, 0) — 2.56x off — because asr floors. Through 1.3.1.
+    #
+    # Now a direction under 2^24 that is NOT a multiple of 256 is used
+    # unshifted (products stay under ~2^48 at DOOM scale). t is a ratio whose
+    # denominator then carries 8 fewer bits of scale, so the quotient is
+    # multiplied back by 256. A multiple-of-256 direction (every integer-unit
+    # direction) or a large one keeps the old shift, where it loses nothing,
+    # and its result is bit-identical to 1.3.1.
+    # The cheap "multiple of 256?" test runs first: integer-unit directions,
+    # the common case, then skip the range test entirely.
+    var fine = 0;
     var dxs = asr(dx, 8);
     var dys = asr(dy, 8);
+    if (((dx | dy) & 255) != 0) {
+        if ((((dx + 16777216) | (dy + 16777216)) >> 25) == 0) {
+            fine = 1;
+            dxs = dx;
+            dys = dy;
+        }
+    }
 
     var denom = dxs * sdy - dys * sdx;
     if (denom == 0) { return -1; }
-
-    var abx = asr(sx1 - ox, 8);
-    var aby = asr(sy1 - oy, 8);
 
     var t_ray_num = abx * sdy - aby * sdx;
     var t_seg_num = abx * dys - aby * dxs;
@@ -186,8 +252,17 @@ fn bsp_ray_cast(ox, oy, dx, dy, sx1, sy1, sx2, sy2) {
         if (t_seg_num < denom) { return -1; }
     }
 
-    # Safe to divide now (denom != 0, signs checked)
-    return fx_div(t_ray_num, denom);
+    # Safe to divide now (denom != 0, signs checked: t_ray_num / denom >= 0).
+    if (fine == 0) { return fx_div(t_ray_num, denom); }
+    # Unshifted direction: t = 256 * (t_ray_num / denom). Fold the 256 into
+    # the dividend while it cannot overflow (|t_ray_num| < 2^55); past that,
+    # divide first and saturate the scaled quotient.
+    if (t_ray_num < 36028797018963968) {
+        if (t_ray_num > 0 - 36028797018963968) { return fx_div(t_ray_num * 256, denom); }
+    }
+    var q = fx_div(t_ray_num, denom);
+    if (q > 8388607) { return FX_MAX; }
+    return q * 256;
 }
 
 # ================================================================
@@ -204,11 +279,23 @@ fn bsp_point_seg_dist(px, py, sx1, sy1, sx2, sy2) {
 
     var sdx_s = asr(sdx, 8);
     var sdy_s = asr(sdy, 8);
-    var len_sq = fx_mul(sdx_s, sdx_s) + fx_mul(sdy_s, sdy_s);
+    # Raw products, NOT fx_mul. Only the RATIO dot / len_sq is used, so the
+    # >>16 inside fx_mul bought nothing but it rounded both terms to WHOLE
+    # square world units: a segment under 1 unit long had len_sq 0 and was
+    # treated as a point, and t on a 2-unit segment could only take a handful
+    # of values — through 1.3.1 the closest point was off by up to 1.07 world
+    # units there (0.42 at 1 unit, 0.29 at 8). Without it the worst case is
+    # under 0.01 units at every length to 512 (1.3.2, 36,000 cases measured
+    # against an exact projection). The overflow ceiling is unchanged: fx_mul
+    # formed exactly these products before shifting them. At DOOM scale
+    # (coordinate deltas to ~2^32 fixed) each product is ~2^48 and each sum
+    # ~2^49; fx_div scales a dividend that large down itself.
+    var len_sq = sdx_s * sdx_s + sdy_s * sdy_s;
     if (len_sq <= 0) {
-        # Degenerate (zero-length) OR sub-precision segment (>>8 collapsed
-        # len_sq to 0). Pick the nearer of the two endpoints; distance to
-        # only sx1/sy1 would break symmetry for points past sx2/sy2.
+        # Zero-length or sub-precision segment (both deltas under 1/256 of a
+        # world unit, so >>8 collapsed them). Pick the nearer of the two
+        # endpoints; distance to only sx1/sy1 would break symmetry for points
+        # past sx2/sy2.
         var d1 = _approx_dist(pdx, pdy);
         var d2 = _approx_dist(px - sx2, py - sy2);
         if (d1 < d2) { return d1; }
@@ -217,7 +304,7 @@ fn bsp_point_seg_dist(px, py, sx1, sy1, sx2, sy2) {
 
     # Project point onto line: t = dot(p-s1, s2-s1) / |s2-s1|^2
     # pdx/pdy are signed; must use asr() to preserve sign through the shift.
-    var dot = fx_mul(asr(pdx, 8), sdx_s) + fx_mul(asr(pdy, 8), sdy_s);
+    var dot = asr(pdx, 8) * sdx_s + asr(pdy, 8) * sdy_s;
     var t = fx_div(dot, len_sq);
     t = fx_clamp(t, 0, FX_ONE);
 

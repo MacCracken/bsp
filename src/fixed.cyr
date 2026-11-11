@@ -88,6 +88,25 @@ fn fx_mul(a, b) { return asr(a * b, 16); }
 # MAGNITUDE so both signs behave identically, and saturate with the correct
 # sign. Bounds are compared directly rather than via fx_abs, because
 # fx_abs(INT64_MIN) is itself negative.
+#
+# FIXED AGAIN IN 1.3.2 — the 1.2.4 scaled path had two holes of its own:
+#
+#  4. A dividend of |a| >= 2^55 still overflowed. The single 8-bit pre-shift
+#     leaves |aa| up to 2^55, and `aa << 16` wraps past 2^63: fx_div(2^56, 2^55)
+#     returned 0 instead of 131072 (2.0), and fx_div(INT64_MIN, -300) returned
+#     0 instead of FX_MAX. Such a dividend now shifts by 16, which keeps
+#     |aa| <= 2^47 and the product in range.
+#  5. It could raise SIGFPE. a in [-2^55, -2^55 + 255] pre-shifts to exactly
+#     -2^47, so `aa << 16` is INT64_MIN; a divisor of -256..-511 scales to -1,
+#     and INT64_MIN / -1 traps on x86 — fx_div(-2^55, -256) killed the process.
+#     On the scaled path |aa << 16| >= 2^55, so any scaled divisor of magnitude
+#     <= 2^24 already puts the true quotient past FX_MAX; it now saturates
+#     before dividing, which also removes the -1 divisor.
+#
+# Both are confined to |a| >= 2^47. Every input that did not trap and had
+# |a| < 2^55 returns exactly what 1.2.4–1.3.1 returned (the saturation
+# threshold moved from "divisor scaled to 0" to "<= 2^24", but every divisor
+# in between was already saturated by the final clamp).
 fn fx_div(a, b) {
     # Sign of the true quotient, tracked up front so every saturating exit
     # picks the right end of the range.
@@ -109,13 +128,21 @@ fn fx_div(a, b) {
     if (aa <= 0 - 140737488355328) { big = 1; }
 
     if (big == 1) {
-        aa = asr(aa, 8);
+        # 8 bits brings |a| < 2^55 under 2^47; a larger dividend needs 16
+        # (|a| < 2^63 -> |aa| <= 2^47, so `aa << 16` still fits).
+        var sh = 8;
+        if (aa >= 36028797018963968) { sh = 16; }
+        if (aa <= 0 - 36028797018963968) { sh = 16; }
+        aa = asr(aa, sh);
         var bmag = bb;
         if (bmag < 0) { bmag = 0 - bmag; }
-        bmag = bmag >> 8;
-        if (bmag == 0) {
-            # |a| >= 2^47 and |b| < 256, so the true quotient exceeds FX_MAX by
-            # many orders of magnitude. Saturating is correct here.
+        # Logical `>>` on purpose: for b = INT64_MIN, `0 - b` is INT64_MIN
+        # again, and only an unsigned shift reads that as the magnitude 2^63.
+        bmag = bmag >> sh;
+        # Here |aa << 16| >= 2^55, so a scaled divisor of magnitude <= 2^24
+        # means a true quotient of at least 2^31 > FX_MAX. Saturate without
+        # dividing — this is also what rules out INT64_MIN / -1 (SIGFPE).
+        if (bmag <= 16777216) {
             if (neg == 1) { return 0 - FX_MAX; }
             return FX_MAX;
         }

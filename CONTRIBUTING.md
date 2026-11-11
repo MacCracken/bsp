@@ -16,7 +16,7 @@ Every change must pass all of these:
 ```sh
 cyrius build src/lib.cyr build/bsp     # watch the unreachable-fn byte count
 cyrius test tests/bsp.tcyr             # must report "0 failed"
-cyrius bench benches/bsp.bcyr          # 13 ops
+cyrius bench benches/bsp.bcyr          # 14 ops
 cyrius fuzz                            # 3 harnesses, 25K standard gate
 cyrius audit                           # fmt + lint + docs + tests + bench
 cyrius distlib                         # regenerate dist/bsp.cyr after ANY src change

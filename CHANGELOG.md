@@ -7,6 +7,230 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-11-10 — review, hardening and optimization sweep
+
+A full review of `src/`: one pass by me and an independent second pass that
+was given the code but not my findings. Each finding was **reproduced with a
+failing program before anything was changed**, then pinned by a test that is
+red on 1.3.1 and green here. The pin is unchanged (Cyrius 6.7.18).
+
+**13 defects fixed**: two that crash the process, six silent wrong answers,
+one silent data loss, three memory-safety holes on corrupted input, and one
+benchmark that measured the wrong thing. There are also four hot-path
+optimizations: the side test that a renderer runs per BSP node per frame is
+**32 % faster**, and a full 3-level tree walk is **55 % faster**.
+
+**This release changes numeric output, but only where 1.3.1 was losing
+precision or overflowing**:
+
+- `bsp_point_seg_dist` and therefore `bsp_nearest_seg`;
+- `bsp_ray_cast` and `bsp_point_side` (with `bsp_point_on_side` and
+  `bsp_find_subsector`), only for a direction that is not a multiple of 256
+  raw units;
+- `bsp_seg_intersect` and `bsp_check_sight`, only at fractional vertices;
+- `fx_div` only for a dividend of 2^55 or more;
+- the blockmap cell index past 32767 cells, or within 1/65536 of a cell below
+  the origin.
+
+**For integer world-unit geometry, which covers every DOOM map and all of
+cyrius-doom's use of BSP, every one of those functions returns exactly what
+1.3.1 returned.** That claim was verified per function over 900K iterations
+each (see Quality gates). Consumer impact checked in the tree: cyrius-doom
+calls only `bsp_point_on_side`, the child accessors, `bsp_is_subsector` and
+`bsp_subsector_idx`, so its behaviour is unchanged. aethersafha and phylax do
+not currently depend on BSP.
+
+### Fixed — crashes
+
+- **`fx_div` raised SIGFPE.** A dividend in [−2^55, −2^55 + 255] pre-shifted to
+  exactly −2^47, so `aa << 16` was INT64_MIN. A divisor of −256..−511 scaled
+  to −1, and INT64_MIN / −1 traps on x86: `fx_div(-2^55, -256)` killed the
+  process (exit 136). On the scaled path any scaled divisor of magnitude
+  ≤ 2^24 already means the quotient exceeds FX_MAX, so it now saturates
+  before dividing.
+- **`bsp_check_sight` dereferenced a 0 `twosided_flags` pointer** and took
+  SIGSEGV. A 0 pointer now means "every wall is one-sided". It costs nothing
+  measurable.
+
+### Fixed — silent wrong answers
+
+- **`fx_div` overflowed for |a| ≥ 2^55.** The 1.2.4 rewrite pre-shifted a
+  large dividend by 8, which leaves up to 2^55, and `aa << 16` wraps past
+  2^63. `fx_div(2^56, 2^55)` returned 0 instead of 2.0. Over 300,000 such
+  inputs, 1.3.1 was **more than 1 % wrong on 76.4 %** and had the **wrong
+  sign on 151,250 (50.4 %)**. A dividend this large now shifts by 16. Over the
+  same inputs: every saturation is correct, the worst relative error on
+  representable quotients is 4.5 × 10⁻⁸, and there are no sign errors. This
+  was reachable from library code: `bsp_ray_cast` against a wall 10⁶ units
+  out returned −852,499,844 where the true t is 1,024,000,000.
+- **`bsp_point_seg_dist` rounded the projection to whole square world
+  units.** `len_sq` and `dot` went through `fx_mul`'s `>>16`, although only
+  their ratio is used. A segment under 1 unit long had `len_sq` 0 and was
+  treated as a point, and on short segments `t` could take only a handful of
+  values. The products are now used raw, which leaves the overflow ceiling
+  unchanged, since `fx_mul` formed exactly these products. Measured over 36,000
+  cases against an exact projection:
+
+  | Segment length (world units) | 0.5 | 1 | 2 | 4 | 8 | 16 | 64 | 512 |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|
+  | 1.3.1 worst closest-point error | 0.18 | 0.42 | **1.07** | 0.38 | 0.29 | 0.064 | 0.014 | 0.0075 |
+  | 1.3.2 worst closest-point error | 0.006 | 0.007 | 0.005 | 0.006 | 0.004 | 0.005 | 0.005 | 0.0067 |
+
+- **`bsp_ray_cast` kept only 8 bits of the direction.** A fixed `>>8` on
+  (dx, dy) turned the unit vector (65536, 255) into (256, 0). A ray climbing
+  3.9 units over 1000 was treated as level, so it hit a wall it passes above
+  and missed one it hits. (+100, 0) became (0, 0) and never hit anything, and
+  (−100, 0) floored to (−1, 0), giving a t 2.56× off. A direction under 2^24
+  that is not a multiple of 256 is now used unshifted, and the quotient is
+  rescaled. Over 100,000 unit-scale rays against an exact reference, 1.3.1 had
+  the hit/miss wrong on 0.12 % and a median t error of 0.3 % (worst 11.7 %).
+  1.3.2 has no hit/miss errors and no t error on that sample, whose wall
+  endpoints sit at whole-unit offsets from the origin; fractional geometry
+  stays quantized to 1/256 of a unit.
+- **`bsp_point_side` had the same defect,** and so did `bsp_point_on_side`
+  and `bsp_find_subsector`, which inline it. With the direction (65536, 255),
+  a point 16.7 units to the right at x = 30000 classified as left, and
+  `bsp_find_subsector` returned the wrong leaf. Over 100,000 arbitrary
+  directions, 1.3.1 had the wrong side on 0.88 % of points and 1.3.2 on none.
+  The shift is now applied only to a direction of 2^24 or more. Scaling both
+  components cannot change which side wins, so for a multiple-of-256
+  direction the answer is identical.
+- **`bsp_check_sight` could see through a closed corner.** Each wall's delta
+  was floored independently, so the two copies of a shared fractional vertex
+  landed up to 256 raw units apart. `bsp_seg_intersect`, `_seg_intersect_pre`
+  and `bsp_ray_cast` now shift every endpoint relative to the fixed point and
+  then subtract. The shared vertex lands in the same place in both walls. When
+  a segment's own delta is a multiple of 256, the new form equals the old one
+  wherever the origin lies (floor(x + k) = floor(x) + k): 0 mismatches over
+  2,000,000 direct checks of the identity.
+- **Blockmaps wider or taller than 32768 cells folded into column 32767.**
+  The cell index went through `fx_div`, which saturates at 32767.99. On a
+  40,000-column grid, 17 segments in 17 different cells all landed in the same
+  one, overflowed it, and a query on one of them returned the other 16. The
+  index is now an exact floor division, and it is always the exact floor:
+  0 exceptions in 900K checks. It is also faster. The only other change is a
+  position less than 1/65536 of a cell below a boundary, left of or below the
+  origin, which used to round up to the boundary's cell and now floors.
+
+### Fixed — silent data loss
+
+- **`blockmap_init` accepted a cell size ≤ 0.** A negative size inverted the
+  coordinate-to-cell mapping, so `blockmap_insert_seg` stored the segment in
+  **no** cell and returned 0 ("fully indexed"), which is the silent-loss case
+  its drop count exists to report. A zero size sent every segment to cell
+  (0,0). Both are now rejected with 0, like bad dimensions already were.
+
+### Fixed — corrupted-buffer memory safety
+
+The blockmap buffer is caller-owned, so its stored cell counts are not
+trusted any more:
+
+- `blockmap_add` with a negative count wrote **before** the cell. A count of
+  −19 overwrote the grid header's ROWS field. It now refuses.
+- `blockmap_query_point` with a count above 16 read the next cell's count
+  and segments as results (20 results from a 16-slot cell). It now reads at
+  most 16.
+- `blockmap_cell_seg` returned the neighbouring cell's segments for an index
+  of 16 or more. `blockmap_cell_count` now clamps to 0..16, so a
+  count/seg loop stays inside the cell.
+
+### Fixed — harness
+
+- **`find_subsector_3node` measured a one-node walk.** The bench tree's root
+  (node 2) had two leaf children, so nodes 0 and 1 were never visited, and its
+  ~47 ns was for one level. The tree is now chained root → 1 → 0 → leaf. The
+  honest 1.3.1 figure is **107 ns**.
+
+### Changed — performance
+
+Measured on the corrected bench file (three to five runs each, ns/op):
+
+| Op | 1.3.1 | 1.3.2 | |
+|---|---:|---:|---|
+| `find_subsector_3node` (now really 3 levels) | 107 | 48 | **−55 %**: side test, child read and leaf test inlined |
+| `point_on_side` | 28–29 | 19 | **−32 %**: side test inlined (cyrius-doom's per-node call) |
+| `count_in_aabb_64` (new bench) | 372–374 | 174 | **−53 %**: box edges loaded once, test inlined (roadmap item) |
+| `point_seg_dist` | 88–89 | 67 | **−24 %**: three `fx_mul` calls gone |
+| `blockmap_query` | 138–140 | 113–115 | **−18 %**: integer floor division for the cell index |
+| `ray_cast` | 53 | 55 | +4 %: direction classification |
+| `check_sight_8walls` | 241 | 246 | +2 %: shared-vertex shift (2 subs per wall) |
+| `seg_intersect_miss` | 39 | 46 | +18 %: this bench is PARALLEL segments, which exit early; that exit now runs 2 more shifts |
+| everything else | — | — | unchanged |
+
+`bsp_point_side` is now copied inline in `bsp_point_on_side` and
+`bsp_find_subsector`. All three must stay identical: each carries a note
+saying so, and the refactor differential checks the copies against
+`bsp_point_side`.
+
+### Documented, not changed
+
+- **The child-reference helpers decode a reference without validating it.**
+  `bsp_is_subsector` / `bsp_subsector_idx` decode 0x18005 (and the
+  sign-extended −32763) as subsector 5. `bsp_find_subsector` rejects both, but
+  a traversal loop a consumer writes itself gets no such protection.
+  `tree.cyr` now spells out the three checks such a loop must make. A
+  validating API is a minor-release item (roadmap § Contract clarity).
+- **`bsp_point_side` breaks ties to the front, DOOM's `R_PointOnSide` to the
+  back.** It also pre-shifts differently, so it was never bit-exact with
+  vanilla DOOM. Noted for cyrius-doom; not changed.
+- `aabb.cyr`'s header comment still said ±2^61 for the 2^50 sentinel. It is
+  corrected.
+
+### Size
+
+| Build | 1.3.1 | 1.3.2 |
+|---|---:|---:|
+| Release (`CYRIUS_DCE=1`) | 19,248 B | 19,248 B |
+| Library code (standalone dead-code accounting) | 159,800 B | 161,576 B (+1,776 B: the inlined side test and new guards) |
+| Standalone `build/bsp` | 178,992 B | 183,088 B (one 4 KB page) |
+| `dist/bsp.cyr` | 1,182 lines | 1,397 lines (mostly comments) |
+
+### Quality gates (on Cyrius 6.7.18)
+
+- **Tests: 168 → 200**, in a new group of 32 assertions,
+  `hardening + precision (1.3.2)`. **Mutation-tested against 1.3.1:** the
+  three crash assertions sit last in the group and kill 1.3.1 outright:
+  SIGSEGV for the null flags pointer, and SIGFPE for the `fx_div` trap once
+  the SIGSEGV ones are removed. Each was confirmed separately. Of the other
+  29, **1.3.1 fails 24**. The remaining 5 are deliberate controls that must
+  pass on both: `fx_div` just under 2^55, a 100-unit wall's distance, a
+  positive cell size, `count_in_aabb`'s edges, and an integer-unit ray. One floor assertion turned out not to discriminate: −1 raw at
+  1-unit cells divides exactly. It was rewritten to use 128-unit cells, where
+  1.3.1 returns 0.
+- **Refactor differential**, 1.3.1 bodies compiled next to the new ones:
+  - `fx_div` below 2^55 (1,423 inputs on which 1.3.1 traps were skipped) and
+    `count_in_aabb`: **0 mismatches over 2,000,000 iterations each**;
+  - the three side-test copies (`bsp_point_side`, the inline in
+    `bsp_point_on_side`, the inline in `bsp_find_subsector`) and the
+    `check_sight` loop: **0 mismatches**.
+  - Mutation-tested: a `>` tie-break in the find_subsector inline gives 8,959
+    mismatches, and `>` on an edge in count_in_aabb gives 23,791.
+- **Integer-unit identity differential**, 1.3.1 math against 1.3.2 math. For
+  integer-unit directions and segments, with fractional origins and points:
+  `point_side`, `point_on_side`, `find_subsector`, `seg_intersect`,
+  `check_sight` and `ray_cast` show **0 mismatches over 900K iterations each**
+  (3 seeds). The cell index is an exact floor every time. Two cautions:
+  - This harness compares final yes/no answers, so it **cannot** see a 1/256
+    shift in one endpoint. A planted seam mutant passed it. The seam change is
+    therefore proven by the direct 2M-case identity check above, not by this
+    harness.
+  - The floor mutant is caught (49,865).
+- **Whole-API probe, 1.3.1 against 1.3.2, same toolchain**: `isect`, `trav`,
+  `query` and `bm` change, as intended. `fixed`, `aabb`, `tree` and `frustum`
+  are **identical** (6 seeds × 500K). The probe was **rebuilt for this**: it
+  drew all modules from one random stream, so once `blockmap_init` began
+  rejecting cell size 0, the skipped draws shifted every later module's
+  inputs and *every* checksum changed. It now reseeds per (iteration, module).
+- **Fuzz**: a new `fuzz_intersect` property requires `fx_div` over the whole
+  i64 range to stay within ±FX_MAX with the correct sign. It is red on 1.3.1
+  on every seed ("wrong sign") and green here. `cyrius fuzz` passes 3/3, and
+  the 3,000,000-iteration stress run has 0 failures.
+- **CI steps run verbatim in a clean checkout**: `Run tests`,
+  `Run fuzz harnesses` and `Run cyrius audit` all exit 0. `cyrius audit`
+  reports fmt clean, lint clean, docs complete and 14 benches.
+  `deps --verify` 28/0 · `vet` 8 deps, 0 untrusted, 0 missing · `deny` 0
+  violations · `distlib --check` current · `cyrius check dist/bsp.cyr` ok.
+
 ## [1.3.1] - 2026-11-10 — Cyrius 6.7.18
 
 Pin move **6.7.9 → 6.7.18** (9 releases), with the vendored stdlib re-synced to

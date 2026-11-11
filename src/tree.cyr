@@ -31,6 +31,16 @@ enum BspNode {
 }
 
 # Check if a child index refers to a subsector (leaf)
+#
+# bsp_is_subsector and bsp_subsector_idx DECODE a child reference; they do not
+# VALIDATE it. 0x18005 decodes as subsector 5 and -32763 as subsector 5 too.
+# bsp_find_subsector rejects such references, but a traversal loop a consumer
+# writes itself (traverse.cyr invites that) gets none of that protection
+# unless it applies the same checks to every reference it follows:
+#   - 0 <= ref <= 0xFFFF (negative and above-16-bit references are invalid;
+#     a loader reading int16 children must zero-extend, not sign-extend);
+#   - a NODE reference (bit 15 clear) must be < node_count;
+#   - bound the walk to node_count steps (a malformed tree can cycle).
 fn bsp_is_subsector(child) {
     if ((child & BSP_NF_SUBSECTOR) != 0) { return 1; }
     return 0;

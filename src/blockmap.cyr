@@ -32,14 +32,22 @@ enum BlockmapConst {
 # Initialize a blockmap with given bounds and cell size.
 # buf = caller-provided buffer, which must hold
 #       BM_DATA + cols * rows * BM_CELL_STRIDE bytes.
-# Returns: buf on success, or 0 if the grid dimensions are unusable.
+# Returns: buf on success, or 0 if the grid dimensions or cell size are
+# unusable.
 #
 # Through 1.2.3 this returned `buf` unconditionally. With cols or rows <= 0 the
 # zeroing loop ran zero times, so the caller got a "successful" blockmap whose
 # cell counts were never initialised — every subsequent query read whatever was
 # in the buffer. The dimensions are also capped so that `cols * rows` cannot
 # overflow i64 and wrap negative, which would skip the zeroing the same way.
+#
+# cell_size must be > 0 (1.3.2). A NEGATIVE size inverts the coordinate-to-
+# cell mapping, so blockmap_insert_seg computed a first column past its last,
+# stored the segment in NO cell, and still returned 0 — "fully indexed" — the
+# silent-loss failure its drop count exists to report. A ZERO size sent every
+# segment to cell (0,0) whatever its position. Both are rejected now.
 fn blockmap_init(buf, origin_x, origin_y, cell_size, cols, rows) {
+    if (cell_size <= 0) { return 0; }
     if (cols <= 0) { return 0; }
     if (rows <= 0) { return 0; }
     if (cols > 2147483647) { return 0; }
@@ -58,24 +66,43 @@ fn blockmap_init(buf, origin_x, origin_y, cell_size, cols, rows) {
     return buf;
 }
 
-# Convert a world X coordinate to a grid column index.
-# Returns 0 if cell_size is 0. The result is NOT clamped to the grid — it can
-# be negative or >= cols for positions outside the blockmap; callers that index
-# with it must clamp (blockmap_add and blockmap_get_cell both range-check).
+# Internal: floor(d / cs) for cs > 0. Integer `/` truncates toward zero, so a
+# negative d with a remainder is one cell too high; step it down.
+fn _bm_floor_div(d, cs) {
+    var q = d / cs;
+    if (d < 0) {
+        if (q * cs != d) { q -= 1; }
+    }
+    return q;
+}
+
+# Convert a world X coordinate to a grid column index: floor((wx - origin_x)
+# / cell_size). Returns 0 if cell_size is not positive (blockmap_init refuses
+# such a grid). The result is NOT clamped to the grid — it can be negative or
+# >= cols for positions outside the blockmap; callers that index with it must
+# clamp (blockmap_add and blockmap_get_cell both range-check).
+#
+# Exact integer floor division since 1.3.2. It went through fx_div before,
+# which SATURATES at 32767.99, so on a grid wider than 32768 cells every
+# column past 32767 folded into column 32767: segments in different cells
+# landed in the same one and overflowed it, and a query returned the wrong
+# segments. It is also cheaper: blockmap_query 139 -> 114 ns. The only other
+# difference: a position less than 1/65536 of a cell below a cell boundary,
+# left of or below the origin, used to round up to that boundary's cell; it
+# now floors, which is the cell it is actually in.
 fn blockmap_cell_x(bm, wx) {
-    var ox = load64(bm + BM_ORIGIN_X);
     var cs = load64(bm + BM_CELL_SIZE);
-    if (cs == 0) { return 0; }
-    return fx_to_int(fx_div(wx - ox, cs));
+    if (cs <= 0) { return 0; }
+    return _bm_floor_div(wx - load64(bm + BM_ORIGIN_X), cs);
 }
 
 # Convert a world Y coordinate to a grid row index. Same contract as
-# blockmap_cell_x: returns 0 if cell_size is 0, and the result is unclamped.
+# blockmap_cell_x: floor((wy - origin_y) / cell_size), 0 if cell_size is not
+# positive, and the result is unclamped.
 fn blockmap_cell_y(bm, wy) {
-    var oy = load64(bm + BM_ORIGIN_Y);
     var cs = load64(bm + BM_CELL_SIZE);
-    if (cs == 0) { return 0; }
-    return fx_to_int(fx_div(wy - oy, cs));
+    if (cs <= 0) { return 0; }
+    return _bm_floor_div(wy - load64(bm + BM_ORIGIN_Y), cs);
 }
 
 # Add a segment index to the cell at (col, row).
@@ -98,6 +125,11 @@ fn blockmap_add(bm, col, row, seg_idx) {
     var cell = bm + BM_DATA + (row * cols + col) * BM_CELL_STRIDE;
     var count = load64(cell);
     if (count >= BM_CELL_MAX_SEGS) { return 0; }
+    # A count below 0 can only come from a corrupted or never-initialised
+    # buffer — and it makes `cell + 8 + count * 8` point BEFORE this cell:
+    # through 1.3.1 a count of -15 wrote into the previous cell and -19
+    # overwrote the grid header's ROWS field. Refuse to write (1.3.2).
+    if (count < 0) { return 0; }
 
     store64(cell + 8 + count * 8, seg_idx);
     store64(cell, count + 1);
@@ -151,9 +183,16 @@ fn blockmap_get_cell(bm, col, row) {
 }
 
 # Query: get count of segments in cell
+#
+# The stored count is clamped to 0..BM_CELL_MAX_SEGS (1.3.2), so a loop over
+# blockmap_cell_seg(cell, 0 .. count-1) stays inside the cell even if the
+# buffer was corrupted or never initialised.
 fn blockmap_cell_count(cell) {
     if (cell == 0) { return 0; }
-    return load64(cell);
+    var n = load64(cell);
+    if (n < 0) { return 0; }
+    if (n > BM_CELL_MAX_SEGS) { return BM_CELL_MAX_SEGS; }
+    return n;
 }
 
 # Query: get segment index `idx` from a cell, or -1 if the request is invalid.
@@ -173,6 +212,10 @@ fn blockmap_cell_seg(cell, idx) {
     # a previous blockmap_init, or uninitialised memory. Only slots below the
     # live count hold a segment this cell actually contains.
     if (idx >= load64(cell)) { return -1; }
+    # ...and against the cap as well (1.3.2): a corrupted count above 16 let
+    # idx 16+ read the NEXT cell's count and segments (1.3.1 returned seg 42,
+    # which lives only in the neighbouring cell, for idx 17).
+    if (idx >= BM_CELL_MAX_SEGS) { return -1; }
     return load64(cell + 8 + idx * 8);
 }
 
@@ -207,11 +250,17 @@ fn blockmap_query_point(bm, px, py, radius, out_buf, out_max) {
             # never-false cell != 0 guard.
             var cell = bm + BM_DATA + (r * cols + c) * BM_CELL_STRIDE;
             var n = load64(cell);
+            # blockmap_add never stores more than BM_CELL_MAX_SEGS, but the
+            # buffer is the caller's: a corrupted count above it made this
+            # loop read the next cell's count and segments as results (1.3.1:
+            # 20 results from a 16-slot cell). One compare per cell (1.3.2).
+            # A negative count already runs the loop zero times.
+            if (n > BM_CELL_MAX_SEGS) { n = BM_CELL_MAX_SEGS; }
             for (var i = 0; i < n; i += 1) {
-                # `cell` is provably non-zero and `i < n <= BM_CELL_MAX_SEGS`
-                # (blockmap_add caps the stored count), so the guards inside
-                # blockmap_cell_seg / blockmap_cell_count can never fire here —
-                # load directly and skip two calls and five branches per segment.
+                # `cell` is provably non-zero and `i < n <= BM_CELL_MAX_SEGS`,
+                # so the guards inside blockmap_cell_seg / blockmap_cell_count
+                # can never fire here — load directly and skip two calls and
+                # five branches per segment.
                 if (out_count >= out_max) { return out_count; }
                 store64(out_buf + out_count * 8, load64(cell + 8 + i * 8));
                 out_count += 1;

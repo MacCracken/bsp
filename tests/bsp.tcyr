@@ -655,6 +655,129 @@ fn main() {
     assert_eq(bsp_find_subsector(tree, 2, fx_from_int(100), fx_from_int(50)), 0,
       "ordinary tree still resolves");
 
+    # ============================================================
+    test_group("hardening + precision (1.3.2)");
+    # ============================================================
+
+    # fx_div: |a| >= 2^55 overflowed the 8-bit pre-shift (`aa << 16` wrapped),
+    # returning garbage — 0 for all four of these through 1.3.1.
+    assert_eq(fx_div(72057594037927936, 36028797018963968), 131072, "fx_div(2^56, 2^55) is 2.0");
+    assert_eq(fx_div(0 - 1152921504606846976, 576460752303423488), 0 - 131072,
+      "fx_div(-2^60, 2^59) is -2.0");
+    assert_eq(fx_div(0 - 9223372036854775807 - 1, 0 - 300), FX_MAX,
+      "fx_div(INT64_MIN, -300) saturates positive");
+    assert_eq(fx_div(4611686018427387904, 0 - 9223372036854775807 - 1), 0 - 32768,
+      "fx_div(2^62, INT64_MIN) is -0.5");
+    # Control: just under 2^55 keeps its exact 1.2.4 value.
+    assert_eq(fx_div(36028797018963712, 18014398509481984), 131071, "fx_div just under 2^55 unchanged");
+
+    # point_seg_dist on short segments. len_sq and dot went through fx_mul's
+    # >>16, which rounded them to whole square world units.
+    # 1-unit segment, point 0.3 along and 0.5 off: exact distance 0.5 (32768).
+    # 1.3.1 snapped the projection to the endpoint and returned 42598 (0.65).
+    var d1u = bsp_point_seg_dist(19660, 32768, 0, 0, FX_ONE, 0);
+    assert_eq(fx_abs(d1u - 32768) < 656, 1, "1-unit segment projects inside (within 0.01 unit)");
+    # A half-unit segment rounded to len_sq 0 and was treated as a POINT
+    # (1.3.1: 73728, the distance to an endpoint).
+    assert_eq(bsp_point_seg_dist(16384, FX_ONE, 0, 0, 32768, 0), FX_ONE,
+      "half-unit segment is a segment, not a point");
+    # Control: a long wall's perpendicular distance is exact either way.
+    assert_eq(bsp_point_seg_dist(fx_from_int(50), fx_from_int(10), 0, 0, fx_from_int(100), 0),
+      fx_from_int(10), "100-unit segment perpendicular distance exact");
+
+    # blockmap_init rejects a zero or negative cell size. A negative size made
+    # insert_seg store nothing while reporting 0 drops.
+    var csbm = alloc(40 + 4 * 136);
+    assert_eq(blockmap_init(csbm, 0, 0, 0, 2, 2), 0, "cell_size 0 rejected");
+    assert_eq(blockmap_init(csbm, 0, 0, 0 - fx_from_int(64), 2, 2), 0, "negative cell_size rejected");
+    assert_eq(blockmap_init(csbm, 0, 0, fx_from_int(64), 2, 2), csbm, "positive cell_size accepted");
+
+    # Control for the 1.3.2 count_in_aabb rewrite: edges are inclusive exactly
+    # as aabb_contains_point decides — both corners count, near-misses do not.
+    var cb = alloc(32);
+    aabb_set(cb, fx_from_int(10), 0, 0, fx_from_int(10));
+    var ce = alloc(16 * 4);
+    store64(ce, 0); store64(ce + 8, 0);
+    store64(ce + 16, fx_from_int(10)); store64(ce + 24, fx_from_int(10));
+    store64(ce + 32, fx_from_int(10) + 1); store64(ce + 40, 0);
+    store64(ce + 48, fx_from_int(5)); store64(ce + 56, 0 - 1);
+    assert_eq(bsp_count_in_aabb(cb, ce, 4), 2, "count_in_aabb: both corners in, near-misses out");
+
+    # ray_cast with a unit-scale direction. The fixed >>8 kept only 8 bits of
+    # it: (65536, 255) was treated as level. Ray climbs 3.89 units by x=1000.
+    var U = FX_ONE;
+    assert_eq(bsp_ray_cast(0, 0, U, 255, 1000 * U, 0, 1000 * U, 3 * U), 0 - 1,
+      "ray_cast unit dir passes ABOVE a wall ending at y=3");
+    assert_eq(bsp_ray_cast(0, 0, U, 255, 1000 * U, 3 * U + U / 2, 1000 * U, 10 * U), 1000 * U,
+      "ray_cast unit dir hits a wall spanning y=3.5..10 at t=1000");
+    # (+100, 0) shifted to (0, 0) and never hit; (-100, 0) floored to (-1, 0).
+    assert_eq(bsp_ray_cast(0, 5 * U, 100, 0, 5 * U, 0, 5 * U, 10 * U), 214748364,
+      "ray_cast tiny +x direction hits");
+    assert_eq(bsp_ray_cast(10 * U, 5 * U, 0 - 100, 0, 5 * U, 0, 5 * U, 10 * U), 214748364,
+      "ray_cast tiny -x direction hits with the same t");
+    # Control: an integer-unit direction is unchanged.
+    assert_eq(bsp_ray_cast(0, 5 * U, U, 0, 5 * U, 0, 5 * U, 10 * U), 5 * U, "ray_cast unit +x direction, t=5");
+    # Far out (1e6 units) the dividend passed 2^55 and fx_div wrapped (1.3.1: -852499844).
+    assert_eq(bsp_ray_cast(0, 0, 64 * U, 0, 1000000 * U, 0 - 300000 * U, 1000000 * U, 300000 * U), 1024000000,
+      "ray_cast at x=1e6 returns the true t");
+
+    # point_side with a unit-scale direction: (65536, 255) lost its y part, so a
+    # point 16.7 units to the right at x=30000 classified LEFT.
+    assert_eq(bsp_point_side(30000 * U, 100 * U, 0, 0, U, 255), 0, "point_side unit dir, point right of line");
+    var un = alloc(BSP_NODE_SIZE);
+    bsp_node_set(un, 0, 0, 0, U, 255);
+    bsp_node_set_children(un, 0, 0x8001, 0x8002);
+    assert_eq(bsp_find_subsector(un, 1, 30000 * U, 100 * U), 1, "find_subsector unit-dir node, front leaf");
+    assert_eq(bsp_point_on_side(un, 0, 30000 * U, 100 * U), 0, "point_on_side unit-dir node, front");
+
+    # Line of sight through a closed corner at a fractional shared vertex V.
+    # Each wall's own delta was floored separately, so V landed in two places.
+    var cw = alloc(64);
+    store64(cw, 0 - 9927840); store64(cw + 8, 0 - 14060098);
+    store64(cw + 16, 0 - 9927717); store64(cw + 24, 23684365);
+    store64(cw + 32, 0 - 9927717); store64(cw + 40, 23684365);
+    store64(cw + 48, 40008744); store64(cw + 56, 23684448);
+    assert_eq(bsp_check_sight(11354991, 0 - 5141251, 0 - 31210737, 52510101, cw, 2, 0), 0,
+      "check_sight blocked by a closed corner at a fractional vertex");
+
+    # Blockmap wider than 32768 cells: the index went through fx_div, which
+    # saturates, so every column past 32767 folded into column 32767.
+    var wide = alloc(40);
+    store64(wide + BM_ORIGIN_X, 0); store64(wide + BM_CELL_SIZE, U);
+    assert_eq(blockmap_cell_x(wide, 35000 * U + U / 2), 35000, "cell_x reaches column 35000");
+    # Exact floor: 1 raw unit left of the origin is column -1. With 128-unit
+    # cells that is under 1/65536 of a cell, which fx_div truncated to 0.
+    var wide128 = alloc(40);
+    store64(wide128 + BM_ORIGIN_X, 0); store64(wide128 + BM_CELL_SIZE, 128 * U);
+    assert_eq(blockmap_cell_x(wide128, 0 - 1), 0 - 1, "cell_x floors a position just left of the origin");
+
+    # Corrupted cell counts must not move reads or writes outside the cell.
+    var cbm = alloc(40 + 2 * 136);
+    blockmap_init(cbm, 0, 0, 128 * U, 2, 1);
+    store64(blockmap_get_cell(cbm, 1, 0), 0 - 19);
+    assert_eq(blockmap_add(cbm, 1, 0, 555), 0, "blockmap_add refuses a negative count");
+    assert_eq(load64(cbm + BM_ROWS), 1, "header ROWS intact after that add");
+    store64(blockmap_get_cell(cbm, 1, 0), 0);
+    blockmap_add(cbm, 1, 0, 42);
+    store64(blockmap_get_cell(cbm, 0, 0), 20);
+    var cq = alloc(8 * 64);
+    assert_eq(blockmap_query_point(cbm, 10 * U, 10 * U, U, cq, 64), 16, "query reads at most 16 from a cell");
+    assert_eq(blockmap_cell_seg(blockmap_get_cell(cbm, 0, 0), 17), 0 - 1, "cell_seg refuses idx past the cap");
+    assert_eq(blockmap_cell_count(blockmap_get_cell(cbm, 0, 0)), 16, "cell_count clamps to the cap");
+
+    # The last two crash 1.3.1 outright, so they come last in the suite.
+    # check_sight takes a 0 flags pointer as "every wall is one-sided"
+    # (1.3.1: SIGSEGV).
+    var sw = alloc(32);
+    store64(sw, fx_from_int(5)); store64(sw + 8, 0 - fx_from_int(5));
+    store64(sw + 16, fx_from_int(5)); store64(sw + 24, fx_from_int(5));
+    assert_eq(bsp_check_sight(0, 0, fx_from_int(10), 0, sw, 1, 0), 0, "check_sight flags=0: wall blocks");
+    assert_eq(bsp_check_sight(0, fx_from_int(20), fx_from_int(10), fx_from_int(20), sw, 1, 0), 1,
+      "check_sight flags=0: clear ray is visible");
+    # -2^55 pre-shifted to exactly -2^47, the -256 divisor scaled to -1, and
+    # INT64_MIN / -1 trapped (1.3.1: SIGFPE).
+    assert_eq(fx_div(0 - 36028797018963968, 0 - 256), FX_MAX, "fx_div(-2^55, -256) saturates, no SIGFPE");
+
     return assert_summary();
 }
 

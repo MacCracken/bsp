@@ -9,11 +9,36 @@
 - **Language**: Cyrius (native, compiled via cycc 6.7.18)
 - **Version**: SemVer, single source of truth at `VERSION` (referenced
   via `version = "${file:VERSION}"` in `cyrius.cyml`)
-- **Binary contribution**: ~2KB compiled (1154 lines across 8 modules
+- **Binary contribution**: ~2KB compiled (1,397 lines across 8 modules
   in `dist/bsp.cyr`)
-- **Status**: v1.3.1 — STABLE on Cyrius 6.7.18. **168 tests passing**,
-  13 benchmarks, 3 fuzz harnesses (25K-iter standard gate),
+- **Status**: v1.3.2 — STABLE on Cyrius 6.7.18. **200 tests passing**,
+  14 benchmarks, 3 fuzz harnesses (25K-iter standard gate),
   **0 undocumented public functions**, `cyrius audit` green (and gated in CI).
+
+  **1.3.2 was a review / hardening / optimization sweep**: 13 defects fixed
+  (2 crashes — an `fx_div` SIGFPE and a null `check_sight` flags pointer; 6
+  silent wrong answers — `fx_div` past 2^55, `point_seg_dist` rounding to whole
+  square units, unit-vector directions losing 8 bits in `ray_cast` and the
+  side test, a corner seam in line of sight, blockmap columns past 32767;
+  plus cell size <= 0, corrupted cell counts, and a 1-level "3-node" bench).
+  The side test is inlined in `bsp_point_on_side` and `bsp_find_subsector`
+  (-32 % / -55 %) — **three copies, keep them identical**. For integer-unit
+  geometry (all DOOM data) every changed function is bit-identical to 1.3.1.
+  Method lessons:
+  - **A differential over final booleans cannot see a 1/256 perturbation.**
+    A planted seam mutant passed the whole-answer harness; the change had to
+    be proven on the quantity that changed (`asr(b2-a,8)-asr(b1-a,8)` ==
+    `asr(b2-b1,8)` when the delta is a multiple of 256). Mutation-test the
+    differential itself, not just the tests.
+  - **A probe that shares one random stream across modules couples them**:
+    when one module's behaviour changed how many draws it took, EVERY
+    module's checksum moved. Reseed per (iteration, module).
+  - **Scale-free quantities don't need a fixed pre-shift.** Direction vectors
+    (side test, ray) only need shifting to stay in range; scaling both
+    components can't change a comparison, which is also what makes the
+    small-direction path provably identical for multiple-of-256 inputs.
+  - An independent reviewer handed the code but NOT my findings found 5
+    issues I had missed and confirmed the 4 I had. Worth doing again.
 
   **1.3.1** moves the pin 6.7.9 → 6.7.18 (no `src/` change, 3M differential
   zero divergence, −496 B on both builds). 6.7.11's lint added a
@@ -257,10 +282,10 @@ cyrius build src/lib.cyr build/bsp
 # (178,992 -> 19,248 B at 6.7.18). Used by release.yml.
 CYRIUS_DCE=1 cyrius build src/lib.cyr build/bsp
 
-# Test (168 assertions across 20 groups)
+# Test (200 assertions across 21 groups)
 cyrius test tests/bsp.tcyr
 
-# Benchmark (13 ops, 9–243 ns/op; harness subtracts the ~1.2us timer floor)
+# Benchmark (14 ops, 9–250 ns/op; harness subtracts the ~1.2us timer floor)
 cyrius build benches/bsp.bcyr build/bench && ./build/bench
 
 # Fuzz — all 3 harnesses, auto-discovered from fuzz/*.fcyr
@@ -281,7 +306,7 @@ cyrius audit
 # Consumer usage: vendor dist/bsp.cyr, or declare a cyrius.cyml git dep:
 # [deps.bsp]
 # git = "https://github.com/MacCracken/bsp"
-# tag = "1.3.1"
+# tag = "1.3.2"
 # modules = ["dist/bsp.cyr"]
 ```
 
@@ -307,10 +332,10 @@ Root files (required):
   committed; `cyrius deps --verify` checks lib/ against it)
 
 tests/:
-  bsp.tcyr — 168 assertions across 20 test groups
+  bsp.tcyr — 200 assertions across 21 test groups
 
 benches/:
-  bsp.bcyr — 13 benchmarks (fx_mul through check_sight)
+  bsp.bcyr — 14 benchmarks (fx_mul through count_in_aabb)
 
 fuzz/:
   fuzz_intersect.fcyr — random segments, rays, distances (10K iters)

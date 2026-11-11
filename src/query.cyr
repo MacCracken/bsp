@@ -82,15 +82,30 @@ fn bsp_nearest_seg(px, py, segs, seg_count) {
 # Count entities in AABB
 # ================================================================
 # Given an array of entity positions (16 bytes each: x, y),
-# count how many fall within the given bounding box.
+# count how many fall within the given bounding box (edges inclusive, exactly
+# as aabb_contains_point decides it).
 fn bsp_count_in_aabb(box, entities, entity_count) {
+    # The box is loop-invariant: load its four edges once and test inline.
+    # Through 1.3.1 every entity paid a call to aabb_contains_point and four
+    # reloads of the same fields — 64 entities 385 -> 182 ns (1.3.2). Same
+    # comparisons in the same sense as aabb_contains_point, so the result is
+    # identical; nothing here writes memory, so hoisting the loads is safe
+    # even if the caller's entity array overlaps the box.
+    var top = load64(box + AABB_TOP);
+    var bottom = load64(box + AABB_BOTTOM);
+    var left = load64(box + AABB_LEFT);
+    var right = load64(box + AABB_RIGHT);
     var count = 0;
     for (var i = 0; i < entity_count; i += 1) {
         var ebase = entities + i * 16;
         var ex = load64(ebase);
         var ey = load64(ebase + 8);
-        if (aabb_contains_point(box, ex, ey) == 1) {
-            count += 1;
+        if (ex >= left) {
+            if (ex <= right) {
+                if (ey >= bottom) {
+                    if (ey <= top) { count += 1; }
+                }
+            }
         }
     }
     return count;

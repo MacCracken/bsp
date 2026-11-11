@@ -1,9 +1,9 @@
 # BSP Development Roadmap
 
-> **v1.3.1** — 178,992 B standalone, 19,248 B release (`CYRIUS_DCE=1`), on
-> cycc 6.7.18. 168/168 assertions across 20 groups, 13/13 benches, 3 fuzz
+> **v1.3.2** — 183,088 B standalone, 19,248 B release (`CYRIUS_DCE=1`), on
+> cycc 6.7.18. 200/200 assertions across 21 groups, 14/14 benches, 3 fuzz
 > harnesses (25K standard gate, clean at 3M stress), `cyrius audit` green,
-> 0 undocumented public functions. 1,182-line `dist/bsp.cyr` bundle.
+> 0 undocumented public functions. 1,397-line `dist/bsp.cyr` bundle.
 >
 > 1.2.3 and 1.2.4 together were the **audit arc**: seven real defects, five of
 > them silent-wrong-answer rather than crash, plus two defects in the fuzz
@@ -28,6 +28,7 @@
 | v1.2.6 | Cyrius 6.6.2 → 6.6.20; stdlib re-synced; `cyrius.lock` added; `dist/bsp.deps` retired by 6.6.18 distlib; audit green again and now gated in CI. 3M-iteration cross-toolchain differential, zero divergence. +57,184 B standalone growth-tax (+3,936 B release), now the project's largest |
 | v1.3.0 | Cyrius 6.6.20 → 6.7.9, the move into the 6.7.x line. No API or behaviour change (3M-iteration differential, zero divergence); sizes unchanged to the byte. CI's missing-fuzz-harness hint repaired for 6.7.9's new exit/message |
 | v1.3.1 | Cyrius 6.7.9 → 6.7.18; no `src/` change, zero-divergence differential, −496 B. 6.7.11's write-length lint caught a dropped newline in the bench header — the 1.2.6 CI audit gate's first real catch |
+| v1.3.2 | Review / hardening / optimization sweep: 13 defects (fx_div SIGFPE + overflow past 2^55, null check_sight flags, point_seg_dist precision, unit-vector directions in ray_cast and the side test, corner seam in line of sight, blockmap >32768 cells, cell size <= 0, corrupted cell counts, a 1-level "3-node" bench). Side test inlined (find_subsector −55 %, point_on_side −32 %); count_in_aabb −53 %. Bit-identical to 1.3.1 for integer-unit geometry. 168 → 200 assertions |
 
 ## Notes on the abandoned 1.2.x language-adoption plan
 
@@ -49,6 +50,7 @@ mirroring another project's sweep.
 
 | # | Item | Detail |
 |---|------|--------|
+| 0 | A validating child-reference helper | `bsp_is_subsector` / `bsp_subsector_idx` decode without validating (0x18005 → subsector 5). Consumer-written walks — cyrius-doom's included — get none of `bsp_find_subsector`'s checks. An additive `bsp_child_ok(ref, node_count)` would give them one call. Documented in `tree.cyr` (1.3.2) |
 | 1 | `Result`-shaped variants for the fallible queries | `bsp_find_subsector`, `bsp_nearest_seg`, `blockmap_query_point` all encode failure as a sentinel (`0`, `-1`) that is indistinguishable from a valid answer. Additive `_r` variants only — the `i64` forms stay, per SemVer |
 | 2 | `fx_div` saturation is unsignalled | `±FX_MAX` means both "divide by zero" and "quotient out of range" and "the quotient really is FX_MAX". A caller cannot tell them apart |
 | 3 | `: i64` return annotations on the public surface | Parse-only, ABI-identical; verify byte-identical codegen |
@@ -65,12 +67,13 @@ still upstream.
 |---|------|--------|--------|
 | 1 | Wait for **Cyrius O3** real DCE | Partly landed | DCE compaction works (178,992 → 19,248 B at 6.7.18); const-prop / dead-store elimination still upstream |
 | 2 | Re-bench under O2/O3/O4 phases | Pending | bench-history per upstream phase landing |
-| 3 | `bsp_count_in_aabb` reloads all four box fields per entity | Open | Found in the 1.2.3 audit, not yet actioned — hoist the bounds out of the loop |
+| 3 | `bsp_count_in_aabb` reloads all four box fields per entity | **Done (1.3.2)** | Bounds hoisted, test inlined: 64 entities 373 → 174 ns |
 
 ## Future
 
 | Item | Detail |
 |------|--------|
+| DOOM-exact side test | `bsp_point_side` breaks ties to the FRONT; vanilla `R_PointOnSide` to the BACK, and pre-shifts differently. Fine for rendering; matters only if cyrius-doom ever needs demo-sync fidelity. A separate `bsp_point_side_doom` would be additive (noted in the 1.3.2 review) |
 | `bsp_bbox_visible` | Currently a placeholder that always returns 1. Either implement it against the frustum or remove it in a major bump — a permanently-true culling test is a trap |
 | Blockmap cell capacity | `BM_CELL_MAX_SEGS` = 16 is a hard cap; dense geometry hits it with valid input. 1.2.4 made the drops *reportable*, not absent. Chained or variable-width cells would remove the ceiling |
 | 3D BSP support | Currently 2D only (DOOM-style). 3D adds Z-plane partition for true 3D queries |

@@ -33,7 +33,8 @@ fn _fz_coord() {
 }
 
 # Fuzz entry: [iters] [seed]. Random segments, rays, distances; must not
-# crash, and asserts non-negative distance and a valid side value.
+# crash, and asserts non-negative distance, a valid side value, and that
+# fx_div stays in range with the right sign over the whole i64 range.
 fn main() {
     alloc_init();
     args_init();
@@ -78,6 +79,34 @@ fn main() {
         bsp_seg_intersect(ax1, ay1, ax1, ay1, bx1, by1, bx2, by2);
         bsp_point_seg_dist(ax1, ay1, bx1, by1, bx1, by1);
         bsp_ray_cast(ax1, ay1, 0, 0, bx1, by1, bx2, by2);
+
+        # fx_div over the FULL i64 range (1.3.2): never outside +-FX_MAX, never
+        # the wrong sign, never a trap. Operand magnitudes are spread over every
+        # bit width (an arithmetic shift of a full-width draw by 0..63). 1.3.1
+        # wrapped for |a| >= 2^55 and got the sign wrong on about half of those.
+        var qa = _fz_rand() >>> (_fz_rand() >> 58);
+        var qb = _fz_rand() >>> (_fz_rand() >> 58);
+        if ((i % 97) == 0) { qa = 0 - 9223372036854775807 - 1; }
+        var q = fx_div(qa, qb);
+        if (q > FX_MAX) {
+            syscall(1, 2, "FAIL: fx_div out of range\n", 26);
+            syscall(60, 1);
+        }
+        if (q < 0 - FX_MAX) {
+            syscall(1, 2, "FAIL: fx_div out of range\n", 26);
+            syscall(60, 1);
+        }
+        if (q != 0) {
+            var want_neg = 0;
+            if (qa < 0) { want_neg = 1 - want_neg; }
+            if (qb < 0) { want_neg = 1 - want_neg; }
+            var is_neg = 0;
+            if (q < 0) { is_neg = 1; }
+            if (is_neg != want_neg) {
+                syscall(1, 2, "FAIL: fx_div wrong sign\n", 24);
+                syscall(60, 1);
+            }
+        }
     }
 
     syscall(1, 1, "fuzz_intersect: ", 16);

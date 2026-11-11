@@ -24,13 +24,26 @@
 fn bsp_point_on_side(nodes, node_idx, px, py) {
     # Compute the node base once instead of four accessor calls that each
     # recompute node_idx * BSP_NODE_SIZE. Field offsets match the accessors
-    # (BSP_NODE_X..BSP_NODE_DY); this is the hot path under bsp_find_subsector.
+    # (BSP_NODE_X..BSP_NODE_DY).
+    #
+    # The side test itself is bsp_point_side's, INLINED (1.3.2): this is what
+    # a renderer calls once per node per frame (cyrius-doom's own walk), and
+    # the extra call level cost more than the arithmetic. It must stay
+    # value-identical to bsp_point_side — same pre-shifts, same products,
+    # same `>=` tie-break — and bsp_find_subsector carries a third copy. Any
+    # change to one MUST be mirrored in all three; the whole-API differential
+    # exercises them against a reference build.
     var base = nodes + node_idx * BSP_NODE_SIZE;
-    var nx = load64(base + BSP_NODE_X);
-    var ny = load64(base + BSP_NODE_Y);
     var ndx = load64(base + BSP_NODE_DX);
     var ndy = load64(base + BSP_NODE_DY);
-    return bsp_point_side(px, py, nx, ny, ndx, ndy);
+    if ((((ndx + 16777216) | (ndy + 16777216)) >> 25) != 0) {
+        ndx = asr(ndx, 8);
+        ndy = asr(ndy, 8);
+    }
+    var left = asr(px - load64(base + BSP_NODE_X), 8) * ndy;
+    var right = asr(py - load64(base + BSP_NODE_Y), 8) * ndx;
+    if (left >= right) { return 0; }
+    return 1;
 }
 
 # ================================================================
@@ -70,16 +83,29 @@ fn bsp_find_subsector(nodes, node_count, px, py) {
     #      That one has to be rejected where the child is READ, because the
     #      loop condition would already have classified it as a leaf.
     var steps = node_count;
-    while (bsp_is_subsector(idx) == 0) {
+    # Per level this used to make four calls — bsp_is_subsector,
+    # bsp_point_on_side -> bsp_point_side, and a child accessor, which
+    # recomputed the node base. All are inlined (1.3.2): a 3-level walk
+    # 110 -> 62 ns. The side test is a copy of bsp_point_side's; see the
+    # note on bsp_point_on_side — keep all three identical.
+    while ((idx & BSP_NF_SUBSECTOR) == 0) {
         if (idx >= node_count) { return 0; }
         if (steps <= 0) { return 0; }
         steps -= 1;
 
-        var side = bsp_point_on_side(nodes, idx, px, py);
-        if (side == 0) {
-            idx = bsp_node_child_r(nodes, idx);
+        var base = nodes + idx * BSP_NODE_SIZE;
+        var ndx = load64(base + BSP_NODE_DX);
+        var ndy = load64(base + BSP_NODE_DY);
+        if ((((ndx + 16777216) | (ndy + 16777216)) >> 25) != 0) {
+            ndx = asr(ndx, 8);
+            ndy = asr(ndy, 8);
+        }
+        var left = asr(px - load64(base + BSP_NODE_X), 8) * ndy;
+        var right = asr(py - load64(base + BSP_NODE_Y), 8) * ndx;
+        if (left >= right) {
+            idx = load64(base + BSP_NODE_CHILD_R);
         } else {
-            idx = bsp_node_child_l(nodes, idx);
+            idx = load64(base + BSP_NODE_CHILD_L);
         }
         if (idx < 0) { return 0; }
         # High-side twin of the negative-child hole closed in 1.2.3. A child
@@ -90,7 +116,7 @@ fn bsp_find_subsector(nodes, node_count, px, py) {
         if (idx > 65535) { return 0; }
     }
 
-    return bsp_subsector_idx(idx);
+    return idx & 0x7FFF;
 }
 
 # ================================================================
@@ -101,8 +127,9 @@ fn bsp_find_subsector(nodes, node_count, px, py) {
 # or does it straddle the partition line?
 # Returns 1 if potentially visible, 0 if fully behind.
 fn bsp_bbox_visible(bbox, vx, vy, vangle_cos, vangle_sin, fov_half) {
-    # For now: always visible (conservative). Full frustum culling lives in
-    # frustum.cyr (frustum_test_aabb); this remains a placeholder. The
+    # Always visible (conservative) — a known placeholder, tracked in
+    # docs/development/roadmap.md § Future. Full frustum culling lives in
+    # frustum.cyr (frustum_test_aabb). The
     # bbox/vx/vy/vangle_cos/vangle_sin/fov_half params are kept for API
     # stability and the future cull implementation. No bbox fields are read
     # yet — loading them here would be dead work, so we don't.
