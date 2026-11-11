@@ -6,16 +6,31 @@
 
 - **Type**: Shared library — geometry foundation for games, compositors, spatial systems
 - **License**: GPL-3.0-only
-- **Language**: Cyrius (native, compiled via cycc 6.6.20)
+- **Language**: Cyrius (native, compiled via cycc 6.7.9)
 - **Version**: SemVer, single source of truth at `VERSION` (referenced
   via `version = "${file:VERSION}"` in `cyrius.cyml`)
 - **Binary contribution**: ~2KB compiled (1154 lines across 8 modules
   in `dist/bsp.cyr`)
-- **Status**: v1.2.6 — STABLE on Cyrius 6.6.20. **168 tests passing**,
+- **Status**: v1.3.0 — STABLE on Cyrius 6.7.9. **168 tests passing**,
   13 benchmarks, 3 fuzz harnesses (25K-iter standard gate),
-  **0 undocumented public functions**, `cyrius audit` green.
+  **0 undocumented public functions**, `cyrius audit` green (and gated in CI).
 
-  **1.2.6 is a pin move** (6.6.2 → 6.6.20) with no library source change;
+  **1.3.0 moves into the 6.7.x line** (6.6.20 → 6.7.9) with no API or
+  behaviour change: `src/` untouched, 3M-iteration differential zero
+  divergence, standalone and release sizes unchanged to the byte (179,488 /
+  19,744 B). Worth knowing at the next pin move:
+  - 6.6.10–6.7.8 misfolded `-K + 10` (unary minus on a constant, then an
+    operator and a literal). BSP writes negative constants as `0 - K`, which
+    is why it was never exposed — keep that style.
+  - 6.7.7 arity-checks forward calls; 6.7.x reserves `trait const true false
+    do dyn`. "Every file compiles at the new pin" is the exposure check.
+  - 6.7.9 `cyrius fuzz` with nothing found exits 1 and prints lower-case
+    `error: no fuzz harnesses found` on stderr — CI greps it
+    case-insensitively, BEFORE the exit check.
+  - 6.7.9 `lib sync` no longer locks nested dirs under `lib/`, but
+    `deps --verify` still walks them (a backup dir there = N local failures).
+
+  **1.2.6 was a pin move** (6.6.2 → 6.6.20) with no library source change;
   behaviour proven identical by a 3M-iteration cross-toolchain differential
   (mutation-tested). Standalone binary 122,304 → **179,488 B** (+46.8 %, the
   largest growth tax yet, all stdlib/prelude); release (`CYRIUS_DCE=1`)
@@ -225,7 +240,7 @@ src/
 cyrius build src/lib.cyr build/bsp
 
 # Release build: eliminates unreachable functions and compacts the binary
-# (179,488 -> 19,744 B at 6.6.20). Used by release.yml.
+# (179,488 -> 19,744 B at 6.7.9). Used by release.yml.
 CYRIUS_DCE=1 cyrius build src/lib.cyr build/bsp
 
 # Test (168 assertions across 20 groups)
@@ -252,7 +267,7 @@ cyrius audit
 # Consumer usage: vendor dist/bsp.cyr, or declare a cyrius.cyml git dep:
 # [deps.bsp]
 # git = "https://github.com/MacCracken/bsp"
-# tag = "1.2.6"
+# tag = "1.3.0"
 # modules = ["dist/bsp.cyr"]
 ```
 

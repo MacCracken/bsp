@@ -7,6 +7,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-10 — Cyrius 6.7.9
+
+Toolchain move into the **Cyrius 6.7.x line**: the pin goes **6.6.20 → 6.7.9**
+(10 releases, 6.7.0–6.7.9) and the vendored stdlib is re-synced to the 6.7.9
+snapshot. **There is no API or behaviour change**, so consumers can take it like
+a patch. `src/` is untouched, and the `dist/bsp.cyr` body is byte-identical to
+1.2.6; only its `# Version:` line moved. Behaviour is proven identical by the
+same 3,000,000-iteration whole-API differential used at 1.2.6. Its checksums
+are the same values 6.6.2, 6.6.20 and 6.7.9 all produce.
+
+### Changed
+
+- **Cyrius pin 6.6.20 → 6.7.9** (`cyrius.cyml`). The 6.7.0–6.7.9 changelog
+  was reviewed for exposure, and each item below was checked against the tree,
+  not taken on report:
+  - **6.7.9 fixes a constant-fold miscompile that 6.6.10–6.7.8 all have.**
+    Unary `-`/`~` on a constant, followed by an operator and a literal, folded
+    wrong (`-K + 10` gave 15, not 5). **BSP is not exposed:** no file in the
+    tree has that shape. The library's unary minuses are on variables
+    (`-left_cos`, `-right_sin`, `-f`) or a bare `return -1;`, and negative
+    constants are written `0 - AABB_EMPTY`. This agrees with the zero-divergence
+    differential, which would have diverged had 6.6.20 been folding a BSP
+    expression wrong.
+  - **6.7.7 arity-checks calls to functions defined later in the file.**
+    Before, a wrong-arity forward call silently dropped or invented an
+    argument. All six harness/program files and `dist/bsp.cyr` compile clean
+    at 6.7.9, so BSP has none.
+  - **New reserved words**: `trait` (6.7.0), `const` (6.7.2), `true`/`false`
+    (6.7.3), `do` (6.7.5), `dyn` (6.7.8). None is used as an identifier;
+    again, every file compiles.
+  - No change to `<<`, `>>`, `>>>`, precedence, or integer/enum semantics.
+    6.7.5 adds `>>>=` (additive). The changelog records no fmt or lint rule
+    changes in the range, and none showed up: `cyrius audit` is clean with no
+    source edits.
+- **Vendored stdlib re-synced** via `cyrius lib sync`. **9 of the 14 declared
+  modules changed** between the 6.6.20 and 6.7.9 snapshots: `alloc`, `atomic`,
+  `fmt`, `fnptr`, `io`, `math`, `str`, `syscalls` and `vec`. `string`,
+  `result`, `args`, `assert` and `bench` are byte-identical. `lib/` matches
+  the 6.7.9 snapshot, and `cyrius.lock` is re-locked (28 files).
+- **`lib sync` no longer locks nested directories under `lib/`.** At 1.2.6
+  (6.6.20) a backup folder inside `lib/` leaked 52 rows into the lock. At
+  6.7.9 the lock written in a working tree that still has that folder is
+  byte-identical to a clean checkout's. `cyrius deps --verify` still *walks*
+  nested folders, though: there it reports `28 verified, 52 failed` (every
+  failure a file in the backup folder) against `28 verified, 0 failed` in a
+  clean tree. Only CI's result counts, and CI has no such folder.
+
+### Fixed
+
+- **CI's missing-fuzz-harness hint was unreachable.** 6.7.9 made a
+  `cyrius fuzz` that finds nothing exit 1 and print `error: no fuzz harnesses
+  found ...` on stderr. Before, it printed "No fuzz harnesses found" and
+  exited 0. CI's fuzz step checked the exit status first and grepped for the
+  capitalised text second, so the case still failed CI, but only as
+  "cyrius fuzz exited 1", and the "are they named `fuzz/*.fcyr`?" hint could
+  never print. The grep is now case-insensitive and runs before the exit
+  check. Run verbatim against a tree with `fuzz/` removed, the old step
+  reports `cyrius fuzz exited 1`, and the new one reports `fuzz harnesses not
+  discovered — are they named fuzz/*.fcyr?`.
+
+### Size
+
+Measured in fresh trees, one build per tree.
+
+| Build | 6.6.20 (1.2.6) | 6.7.9 (1.3.0) | Δ |
+|---|---:|---:|---:|
+| Standalone `build/bsp` | 179,488 B | 179,488 B | **0 B** |
+| — of which unreachable | 553 fns / 156,377 B | 556 fns / 157,167 B | +3 fns / +790 B |
+| — reachable remainder | 23,111 B | 22,321 B | −790 B |
+| Release (`CYRIUS_DCE=1`) | 19,744 B | 19,744 B | 0 B |
+
+The file sizes match to the byte, but the binaries do not (different SHA256).
+
+### Quality gates (on Cyrius 6.7.9)
+
+- **Tests**: **168 passed, 0 failed**.
+- **Cross-toolchain whole-API differential**: the 1.2.6 probe (every public
+  function plus `_seg_check`, `_seg_intersect_pre` and `_approx_dist`, with
+  eight per-module checksums, malformed trees and blockmaps included),
+  compiled unchanged under 6.6.20 and 6.7.9. **6 seeds × 500,000 = 3,000,000
+  iterations: every checksum identical.** The 6.7.9 binary under test is the
+  one a clean checkout builds (same SHA256).
+- **Probe re-mutation-tested at 6.7.9.** The four seeded bugs from 1.2.6
+  (`fx_mul` on logical `>>`, `blockmap_cell_seg` off by one, the above-16-bit
+  child guard removed, `AABB_EMPTY` at 2^31) each change only the owning
+  module's checksums and its callers'.
+- **Fuzz**: `cyrius fuzz` 3/3, plus **3,000,000 stress iterations** (3
+  harnesses × 5 seeds × 200K), 0 failures.
+- **Benches**: 13/13, **flat**. These are ns/op ranges over three runs each:
+
+  | Op | 6.6.20 | 6.7.9 |
+  |---|---:|---:|
+  | `fx_mul` | 14–17 | 15–17 |
+  | `fx_div` | 13 | 12–13 |
+  | `aabb_contains` | 12 | 12–13 |
+  | `aabb_intersects` | 10 | 9–10 |
+  | `aabb_merge` | 24 | 24–25 |
+  | `seg_intersect_hit` | 55–57 | 55–57 |
+  | `seg_intersect_miss` | 39–41 | 39–40 |
+  | `point_seg_dist` | 90–91 | 90–91 |
+  | `ray_cast` | 54 | 54 |
+  | `point_on_side` | 28–29 | 29 |
+  | `find_subsector_3node` | 47–48 | 47 |
+  | `blockmap_query` | 140–141 | 140–145 |
+  | `check_sight_8walls` | 242–246 | 246–247 |
+
+  Every row overlaps. Read the table as *no change*.
+- **CI steps run verbatim in a clean checkout.** The `Run tests`,
+  `Run fuzz harnesses` and `Run cyrius audit` scripts were extracted from
+  `ci.yml` and executed as-is: all exit 0. `cyrius audit`: fmt clean, lint
+  clean, docs complete.
+- **`cyrius deps --verify`** 28/0 · **`cyrius vet src/lib.cyr`** 8 deps,
+  0 untrusted, 0 missing · **`cyrius deny src/lib.cyr`** 0 violations ·
+  **`distlib --check`** current · **`cyrius check dist/bsp.cyr`** ok.
+
 ## [1.2.6] - 2026-11-10 — Cyrius 6.6.20
 
 Toolchain catch-up: the pin moves **6.6.2 → 6.6.20** (18 patches) and the

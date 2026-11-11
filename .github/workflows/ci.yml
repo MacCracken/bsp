@@ -116,13 +116,17 @@ jobs:
       # `cyrius fuzz` derives its denominator from whatever it finds, so
       # "1 passed, 0 failed" is a PASS even with 2 harnesses missing —
       # hence the explicit floor of 3.
+      # Since Cyrius 6.7.9 the nothing-found case exits 1 and prints
+      # `error: no fuzz harnesses found ...` (lower-case, on stderr), so the
+      # discovery grep is case-insensitive and runs BEFORE the exit check —
+      # otherwise the generic "exited 1" error would hide the naming hint.
       - name: Run fuzz harnesses
         run: |
           ec=0
           cyrius fuzz > /tmp/fuzz_output 2>&1 || ec=$?
           cat /tmp/fuzz_output
+          grep -qi "no fuzz harnesses found" /tmp/fuzz_output && { echo "::error::fuzz harnesses not discovered — are they named fuzz/*.fcyr?"; exit 1; }
           [ "$ec" -eq 0 ] || { echo "::error::cyrius fuzz exited $ec"; exit 1; }
-          grep -q "No fuzz harnesses found" /tmp/fuzz_output && { echo "::error::fuzz harnesses not discovered — are they named fuzz/*.fcyr?"; exit 1; }
           grep -Eq '(^| )0 failed' /tmp/fuzz_output || { echo "::error::fuzz reported failures"; exit 1; }
           PASSED=$(grep -oE '[0-9]+ passed' /tmp/fuzz_output | tail -1 | cut -d' ' -f1)
           [ "${PASSED:-0}" -ge 3 ] || { echo "::error::expected >=3 fuzz harnesses, ran ${PASSED:-0}"; exit 1; }
