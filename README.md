@@ -86,7 +86,7 @@ real consumer already links; the `CYRIUS_DCE=1` release build is ~20 KB.)
 
 ## Build & Test
 
-Requires the Cyrius toolchain pinned in `cyrius.cyml` (currently 6.7.9).
+Requires the Cyrius toolchain pinned in `cyrius.cyml` (currently 6.7.18).
 
 ```sh
 cyrius build src/lib.cyr build/bsp
@@ -107,7 +107,7 @@ with `cyrius distlib`), or declare a git dependency in your own `cyrius.cyml`:
 ```toml
 [deps.bsp]
 git = "https://github.com/MacCracken/bsp"
-tag = "1.3.0"
+tag = "1.3.1"
 modules = ["dist/bsp.cyr"]
 ```
 

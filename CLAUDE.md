@@ -6,16 +6,25 @@
 
 - **Type**: Shared library — geometry foundation for games, compositors, spatial systems
 - **License**: GPL-3.0-only
-- **Language**: Cyrius (native, compiled via cycc 6.7.9)
+- **Language**: Cyrius (native, compiled via cycc 6.7.18)
 - **Version**: SemVer, single source of truth at `VERSION` (referenced
   via `version = "${file:VERSION}"` in `cyrius.cyml`)
 - **Binary contribution**: ~2KB compiled (1154 lines across 8 modules
   in `dist/bsp.cyr`)
-- **Status**: v1.3.0 — STABLE on Cyrius 6.7.9. **168 tests passing**,
+- **Status**: v1.3.1 — STABLE on Cyrius 6.7.18. **168 tests passing**,
   13 benchmarks, 3 fuzz harnesses (25K-iter standard gate),
   **0 undocumented public functions**, `cyrius audit` green (and gated in CI).
 
-  **1.3.0 moves into the 6.7.x line** (6.6.20 → 6.7.9) with no API or
+  **1.3.1** moves the pin 6.7.9 → 6.7.18 (no `src/` change, 3M differential
+  zero divergence, −496 B on both builds). 6.7.11's lint added a
+  write-length rule (`syscall(1, fd, "lit", N)` with N != the literal's
+  byte count) — it found a dropped newline in `benches/bsp.bcyr`, and the
+  CI audit gate went red on it exactly as intended. For a pin move this far
+  (45K changelog lines), read upstream's
+  `docs/development/ecosystem-migration.md` sections instead of the
+  CHANGELOG — it is the consumer-facing summary.
+
+  **1.3.0 moved into the 6.7.x line** (6.6.20 → 6.7.9) with no API or
   behaviour change: `src/` untouched, 3M-iteration differential zero
   divergence, standalone and release sizes unchanged to the byte (179,488 /
   19,744 B). Worth knowing at the next pin move:
@@ -232,6 +241,11 @@ src/
   mixed configuration that never ships: doing that here produced a −5,664 B
   "shrink" when the honest number was +19,936 B. Use
   `git archive <tag> | tar -x -C <clean-dir>` and build once.
+- **Never "restore" a moved-aside `lib/` with `mv saved lib` after a build.**
+  The build recreates `lib/`, so `mv` puts the saved copy INSIDE it. A
+  1.2.2-era session did this twice and left `lib/lib_hold/lib_synced_6519/`
+  behind for three months (it polluted the 1.2.6 lock and the 1.3.0
+  `deps --verify`). Measure in a fresh tree instead, or `rm -rf lib` first.
 
 ## Build & Test Commands
 
@@ -240,7 +254,7 @@ src/
 cyrius build src/lib.cyr build/bsp
 
 # Release build: eliminates unreachable functions and compacts the binary
-# (179,488 -> 19,744 B at 6.7.9). Used by release.yml.
+# (178,992 -> 19,248 B at 6.7.18). Used by release.yml.
 CYRIUS_DCE=1 cyrius build src/lib.cyr build/bsp
 
 # Test (168 assertions across 20 groups)
@@ -267,7 +281,7 @@ cyrius audit
 # Consumer usage: vendor dist/bsp.cyr, or declare a cyrius.cyml git dep:
 # [deps.bsp]
 # git = "https://github.com/MacCracken/bsp"
-# tag = "1.3.0"
+# tag = "1.3.1"
 # modules = ["dist/bsp.cyr"]
 ```
 

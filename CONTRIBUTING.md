@@ -3,7 +3,7 @@
 ## Development
 
 1. Install the Cyrius toolchain at the version pinned in `cyrius.cyml`
-   (currently **6.7.9**). The pin — not whichever `cycc` is on your PATH —
+   (currently **6.7.18**). The pin — not whichever `cycc` is on your PATH —
    decides which stdlib snapshot `cyrius build` vendors into `lib/`.
 2. `cyrius build src/lib.cyr build/bsp` to compile.
 3. `tests/bsp.tcyr` is the test suite. `programs/test_bsp.cyr` is a

@@ -269,7 +269,7 @@ fn main() {
     bench_run(b13, &bench_check_sight, 50000);
     vec_push(benches, b13);
 
-    syscall(1, 1, "\n=== BSP Benchmarks ===\n", 23);
+    syscall(1, 1, "\n=== BSP Benchmarks ===\n", 24);
     bench_report_all(benches);
 
     return 0;

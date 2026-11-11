@@ -1,7 +1,7 @@
 # BSP Development Roadmap
 
-> **v1.3.0** — 179,488 B standalone, 19,744 B release (`CYRIUS_DCE=1`), on
-> cycc 6.7.9. 168/168 assertions across 20 groups, 13/13 benches, 3 fuzz
+> **v1.3.1** — 178,992 B standalone, 19,248 B release (`CYRIUS_DCE=1`), on
+> cycc 6.7.18. 168/168 assertions across 20 groups, 13/13 benches, 3 fuzz
 > harnesses (25K standard gate, clean at 3M stress), `cyrius audit` green,
 > 0 undocumented public functions. 1,182-line `dist/bsp.cyr` bundle.
 >
@@ -27,6 +27,7 @@
 | v1.2.5 | Cyrius 6.5.20 → 6.6.2 (pure pin move). Shipped with `cyrius audit` red: the 6.6.x audit lints and doc-checks the harnesses too, and flagged 19 undocumented harness functions and one over-length test line |
 | v1.2.6 | Cyrius 6.6.2 → 6.6.20; stdlib re-synced; `cyrius.lock` added; `dist/bsp.deps` retired by 6.6.18 distlib; audit green again and now gated in CI. 3M-iteration cross-toolchain differential, zero divergence. +57,184 B standalone growth-tax (+3,936 B release), now the project's largest |
 | v1.3.0 | Cyrius 6.6.20 → 6.7.9, the move into the 6.7.x line. No API or behaviour change (3M-iteration differential, zero divergence); sizes unchanged to the byte. CI's missing-fuzz-harness hint repaired for 6.7.9's new exit/message |
+| v1.3.1 | Cyrius 6.7.9 → 6.7.18; no `src/` change, zero-divergence differential, −496 B. 6.7.11's write-length lint caught a dropped newline in the bench header — the 1.2.6 CI audit gate's first real catch |
 
 ## Notes on the abandoned 1.2.x language-adoption plan
 
@@ -56,13 +57,13 @@ mirroring another project's sweep.
 ## v1.4.x — Performance recovery (gated on Cyrius O3)
 
 `CYRIUS_DCE=1` now *compacts* rather than NOPing in place (true by 6.6.2, and
-still at 6.7.9): the release build drops 156,377 B of unreachable code and
-ships 19,744 B. The rest of Cyrius O3 (const-prop, dead-store elimination) is
+still at 6.7.18): the release build drops 159,800 B of unreachable code and
+ships 19,248 B. The rest of Cyrius O3 (const-prop, dead-store elimination) is
 still upstream.
 
 | # | Item | Status | Detail |
 |---|------|--------|--------|
-| 1 | Wait for **Cyrius O3** real DCE | Partly landed | DCE compaction works (179,488 → 19,744 B at 6.7.9); const-prop / dead-store elimination still upstream |
+| 1 | Wait for **Cyrius O3** real DCE | Partly landed | DCE compaction works (178,992 → 19,248 B at 6.7.18); const-prop / dead-store elimination still upstream |
 | 2 | Re-bench under O2/O3/O4 phases | Pending | bench-history per upstream phase landing |
 | 3 | `bsp_count_in_aabb` reloads all four box fields per entity | Open | Found in the 1.2.3 audit, not yet actioned — hoist the bounds out of the loop |
 

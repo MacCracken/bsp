@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-10 — Cyrius 6.7.18
+
+Pin move **6.7.9 → 6.7.18** (9 releases), with the vendored stdlib re-synced to
+the 6.7.18 snapshot. `src/` is untouched, and the `dist/bsp.cyr` body is
+byte-identical to 1.3.0; only its `# Version:` line moved. Behaviour is proven
+identical by the 3,000,000-iteration whole-API differential, which gives the
+same checksums every pin since 6.6.2 has. The one code change is a harness
+bug that 6.7.18's lint caught.
+
+### Fixed
+
+- **`benches/bsp.bcyr` dropped the newline from its header.** The final
+  write was `syscall(1, 1, "\n=== BSP Benchmarks ===\n", 23)`, but the
+  literal is 24 bytes, so the trailing `\n` was never written and every bench
+  run printed `=== BSP Benchmarks ====== Benchmarks ===` on one line, run
+  together with the harness's own header. The count is now 24. It was caught by
+  the **write-length lint rule added in Cyrius 6.7.11**, which compares a
+  literal `syscall` write length with the literal's byte count. That rule
+  checked every other literal write in `src/`, `tests/`, `benches/`, `fuzz/` and
+  `programs/`, and this was the only mismatch.
+  **The CI audit gate added in 1.2.6 did its job here**: on the unchanged 1.3.0
+  tree at the 6.7.18 pin, CI's audit step, run verbatim, exits 1 on
+  `1 lint warnings`. With the fix it exits 0.
+
+### Changed
+
+- **Cyrius pin 6.7.9 → 6.7.18** (`cyrius.cyml`). The 6.7.10–6.7.18 changelog
+  is 45,000 lines, almost entirely about structs, generics, closures,
+  vectors, TLS, networking and non-Linux targets, none of which BSP uses. The
+  review therefore went through upstream's consumer-facing
+  `docs/development/ecosystem-migration.md` for the compiler, frontend,
+  tools, stdlib, distlib and DCE sections, and confirmed each finding against
+  the tree:
+  - **New refusals do not reach BSP.** Enum members without a `;`/`,`
+    separator (6.7.16): every BSP enum member ends in `;`. A statement that is
+    only a value builtin, such as a bare `load64(p);` (6.7.17): none. Code
+    after a filename on an `include` line (6.7.17): none. Every file
+    (`src/`, `tests/`, `benches/`, `fuzz/`, `programs/`, `dist/bsp.cyr`)
+    compiles at 6.7.18.
+  - **New lint rules (6.7.11)**: the write-length rule fired once (see Fixed).
+    The constant-offset overrun rule on `load*/store*(&a + K)` past a local
+    `var a[N]` fires nowhere.
+  - **No change to any text CI greps**, checked by running CI's test, fuzz and
+    audit steps verbatim (see Quality gates). That includes the no-harness
+    case, which still shows the "are they named `fuzz/*.fcyr`?" hint.
+  - **Lock procedure**: `cyrius lib sync` re-vendors and re-locks; a clean
+    checkout's `cyrius deps` (CI order) leaves the committed lock
+    byte-identical.
+- **Vendored stdlib re-synced.** **10 of the 14 declared modules changed**
+  between the 6.7.9 and 6.7.18 snapshots: `alloc`, `args`, `fmt`, `fnptr`,
+  `io`, `math`, `result`, `str`, `syscalls` and `vec`. `string`, `atomic`,
+  `assert` and `bench` are byte-identical. `lib/` matches the 6.7.18 snapshot,
+  and `cyrius.lock` is re-locked (28 files).
+- **Correction to 1.3.0's notes:** the "backup folder inside `lib/`" was not a
+  backup. It was debris from a 1.2.2-era build experiment that restored a
+  moved-aside `lib/` with `mv` after the build had already recreated `lib/`,
+  so `mv` nested the old copy inside the new one, twice
+  (`lib/lib_hold/lib_synced_6519/`). It held two identical copies of the
+  6.5.19-era vendored stdlib and nothing else. It was never tracked, never
+  reached CI, and has been removed. `cyrius deps --verify` is now 28/0 in the
+  working tree as well.
+
+### Size
+
+Measured in fresh trees, one build per tree.
+
+| Build | 6.7.9 (1.3.0) | 6.7.18 (1.3.1) | Δ |
+|---|---:|---:|---:|
+| Standalone `build/bsp` | 179,488 B | 178,992 B | **−496 B** |
+| — of which unreachable | 556 fns / 157,167 B | 570 fns / 159,800 B | +14 fns / +2,633 B |
+| — reachable remainder | 22,321 B | 19,192 B | −3,129 B |
+| Release (`CYRIUS_DCE=1`) | 19,744 B | 19,248 B | **−496 B** |
+
+### Quality gates (on Cyrius 6.7.18)
+
+- **Tests**: **168 passed, 0 failed**.
+- **Cross-toolchain whole-API differential**, 6.7.9 vs 6.7.18, run with the
+  same probe as 1.2.6/1.3.0: **6 seeds × 500,000 = 3,000,000 iterations, every
+  checksum identical**. The probe was re-mutation-tested at 6.7.18: each of the
+  four seeded bugs changes only its owning module's checksums and its
+  callers'.
+- **Fuzz**: `cyrius fuzz` 3/3, plus **3,000,000 stress iterations** (3
+  harnesses × 5 seeds × 200K), 0 failures.
+- **Benches**: 13/13, **flat**. These are ns/op ranges over three runs each:
+
+  | Op | 6.7.9 | 6.7.18 |
+  |---|---:|---:|
+  | `fx_mul` | 13–14 | 13–14 |
+  | `fx_div` | 13 | 12–13 |
+  | `aabb_contains` | 12 | 12 |
+  | `aabb_intersects` | 9 | 9–10 |
+  | `aabb_merge` | 24 | 24 |
+  | `seg_intersect_hit` | 54–55 | 54 |
+  | `seg_intersect_miss` | 39–40 | 40–41 |
+  | `point_seg_dist` | 89–90 | 89–91 |
+  | `ray_cast` | 53 | 53–54 |
+  | `point_on_side` | 28–29 | 29 |
+  | `find_subsector_3node` | 47 | 47 |
+  | `blockmap_query` | 139–141 | 140–141 |
+  | `check_sight_8walls` | 241–243 | 242–244 |
+
+- **CI steps run verbatim in a clean checkout**: `Run tests`, `Run fuzz
+  harnesses` and `Run cyrius audit` all exit 0. `cyrius audit`: fmt clean, lint
+  clean, docs complete.
+- **`cyrius deps --verify`** 28/0 · **`cyrius vet src/lib.cyr`** 8 deps,
+  0 untrusted, 0 missing · **`cyrius deny src/lib.cyr`** 0 violations ·
+  **`distlib --check`** current · **`cyrius check dist/bsp.cyr`** ok.
+
 ## [1.3.0] - 2026-11-10 — Cyrius 6.7.9
 
 Toolchain move into the **Cyrius 6.7.x line**: the pin goes **6.6.20 → 6.7.9**
